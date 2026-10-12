@@ -2,19 +2,19 @@ require "test_helper"
 
 class EntryTest < Minitest::Test
   def setup
-    SyncRecordWatch.reset!
-    @config = SyncRecordWatch.configuration
+    WatchClient.reset!
+    @config = WatchClient.configuration
     @config.environment = "staging"
     @config.host = "web-2"
     @config.app_version = nil
   end
 
   def teardown
-    SyncRecordWatch.reset!
+    WatchClient.reset!
   end
 
   def build(**args)
-    SyncRecordWatch::Entry.build(@config, **{ severity: :info, message: "hi", context: {} }.merge(args))
+    WatchClient::Entry.build(@config, **{ severity: :info, message: "hi", context: {} }.merge(args))
   end
 
   def test_maps_logger_severities_to_hub_levels
@@ -32,7 +32,7 @@ class EntryTest < Minitest::Test
 
   def test_truncates_huge_messages
     entry = build(message: "x" * 100_000)
-    assert_equal SyncRecordWatch::Entry::MAX_MESSAGE_BYTES, entry["message"].bytesize
+    assert_equal WatchClient::Entry::MAX_MESSAGE_BYTES, entry["message"].bytesize
   end
 
   def test_repairs_invalid_utf8
@@ -79,10 +79,10 @@ class EntryTest < Minitest::Test
 
   def test_user_id_resolver_can_read_the_rack_env
     @config.current_user_id = ->(env) { env["warden.user"] }
-    Thread.current[:syncrecord_watch_rack_env] = { "warden.user" => 7 }
+    Thread.current[:watch_client_rack_env] = { "warden.user" => 7 }
     assert_equal "7", build(context: { request_id: "r" })["user_id"]
   ensure
-    Thread.current[:syncrecord_watch_rack_env] = nil
+    Thread.current[:watch_client_rack_env] = nil
   end
 
   def test_user_id_resolver_errors_are_ignored

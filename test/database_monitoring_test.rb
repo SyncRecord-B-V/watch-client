@@ -1,7 +1,7 @@
 require "test_helper"
 
 class SqlNormalizerTest < Minitest::Test
-  def normalize(sql) = SyncRecordWatch::SqlNormalizer.normalize(sql)
+  def normalize(sql) = WatchClient::SqlNormalizer.normalize(sql)
 
   def test_removes_values
     assert_equal "SELECT * FROM users WHERE email = ? AND id IN (?) LIMIT ?",
@@ -31,30 +31,30 @@ class SqlNormalizerTest < Minitest::Test
   end
 
   def test_same_shape_same_fingerprint
-    a = SyncRecordWatch::SqlNormalizer.fingerprint(normalize("SELECT * FROM t WHERE id = 1"))
-    b = SyncRecordWatch::SqlNormalizer.fingerprint(normalize("select *  from t where id = 99"))
+    a = WatchClient::SqlNormalizer.fingerprint(normalize("SELECT * FROM t WHERE id = 1"))
+    b = WatchClient::SqlNormalizer.fingerprint(normalize("select *  from t where id = 99"))
     assert_equal a, b
   end
 
   def test_transaction_statements
-    assert SyncRecordWatch::SqlNormalizer.transaction_statement?("COMMIT")
-    assert SyncRecordWatch::SqlNormalizer.transaction_statement?("  SAVEPOINT active_record_1")
-    refute SyncRecordWatch::SqlNormalizer.transaction_statement?("SELECT 1")
+    assert WatchClient::SqlNormalizer.transaction_statement?("COMMIT")
+    assert WatchClient::SqlNormalizer.transaction_statement?("  SAVEPOINT active_record_1")
+    refute WatchClient::SqlNormalizer.transaction_statement?("SELECT 1")
   end
 end
 
 class SlowQueriesTest < Minitest::Test
   def setup
-    @config = SyncRecordWatch::Configuration.new
+    @config = WatchClient::Configuration.new
     @config.slow_query_ms = 100
     @config.app_root = File.expand_path("..", __dir__)
-    @slow = SyncRecordWatch::SlowQueries.new(@config)
+    @slow = WatchClient::SlowQueries.new(@config)
   end
 
   def test_groups_slow_queries_and_ignores_fast_ones
     refute @slow.record(sql: "SELECT * FROM users WHERE id = 1", duration_ms: 5)
     assert @slow.record(sql: "SELECT * FROM users WHERE id = 1", duration_ms: 150, name: "User Load")
-    SyncRecordWatch::Context.with(request_id: "req-9") do
+    WatchClient::Context.with(request_id: "req-9") do
       assert @slow.record(sql: "SELECT * FROM users WHERE id = 2", duration_ms: 400, name: "User Load")
     end
     groups = @slow.take
@@ -73,10 +73,10 @@ class SlowQueriesTest < Minitest::Test
     refute @slow.record(sql: "SELECT a.attname FROM pg_attribute", duration_ms: 500, name: "SCHEMA")
     refute @slow.record(sql: "SELECT 1", duration_ms: 500, cached: true)
     refute @slow.record(sql: "COMMIT", duration_ms: 500)
-    Thread.current[:syncrecord_watch_internal] = true
+    Thread.current[:watch_client_internal] = true
     refute @slow.record(sql: "SELECT 1", duration_ms: 500)
   ensure
-    Thread.current[:syncrecord_watch_internal] = nil
+    Thread.current[:watch_client_internal] = nil
   end
 
   def test_before_send_query_can_drop
@@ -124,7 +124,7 @@ class DatabaseSamplerTest < Minitest::Test
                                      "index_bytes" => "200", "live_rows" => "10", "dead_rows" => "1" } ],
       "pg_stat_user_indexes" => [ { "schema" => "public", "table" => "log_entries", "name" => "idx_old", "bytes" => "2000000", "scans" => "0" } ]
     )
-    @sampler = SyncRecordWatch::DatabaseSampler.new(@pool)
+    @sampler = WatchClient::DatabaseSampler.new(@pool)
   end
 
   def test_health_with_rates_from_the_second_sample
@@ -181,11 +181,11 @@ class DatabaseMonitorTest < Minitest::Test
     @hub = FakeHub.new
     configure_for(@hub, slow_query_ms: 100)
     @pool = FakePool.new({})
-    @monitor = SyncRecordWatch::DatabaseMonitor.new(SyncRecordWatch.configuration, pool: @pool)
+    @monitor = WatchClient::DatabaseMonitor.new(WatchClient.configuration, pool: @pool)
   end
 
   def teardown
-    SyncRecordWatch.reset!
+    WatchClient.reset!
     @hub.stop
   end
 

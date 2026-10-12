@@ -10,20 +10,20 @@ class ForkTest < Minitest::Test
   end
 
   def teardown
-    SyncRecordWatch.reset!
+    WatchClient.reset!
     @hub&.stop
   end
 
   # Puma workers and Sidekiq fork after boot: the child must start its own
   # delivery thread and must not resend the parent's buffered lines.
   def test_child_process_delivers_its_own_lines
-    SyncRecordWatch.configuration.flush_interval = 60
-    SyncRecordWatch.logger.info("parent line")
+    WatchClient.configuration.flush_interval = 60
+    WatchClient.logger.info("parent line")
 
     pid = fork do
-      SyncRecordWatch.configuration.flush_interval = 0.05
-      SyncRecordWatch.logger.info("child line")
-      SyncRecordWatch.flush
+      WatchClient.configuration.flush_interval = 0.05
+      WatchClient.logger.info("child line")
+      WatchClient.flush
       exit!(0)
     end
     Process.wait(pid)

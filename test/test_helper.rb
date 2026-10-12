@@ -4,7 +4,7 @@ require "socket"
 require "json"
 require "zlib"
 require "stringio"
-require "syncrecord_watch"
+require "watch_client"
 
 # A tiny HTTP/1.1 server on 127.0.0.1 that records requests and answers with
 # queued status codes (default 202). Supports keep-alive like Log Hub.
@@ -102,8 +102,8 @@ end
 
 module WatchTestHelpers
   def configure_for(hub, **overrides)
-    SyncRecordWatch.reset!
-    SyncRecordWatch.configure do |c|
+    WatchClient.reset!
+    WatchClient.configure do |c|
       c.url = hub.url
       c.api_key = "lh_test_key"
       c.app_name = "test-app"

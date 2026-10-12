@@ -1,6 +1,6 @@
 require "test_helper"
-require "syncrecord_watch/sidekiq"
-require "syncrecord_watch/active_job"
+require "watch_client/sidekiq"
+require "watch_client/active_job"
 
 class JobMetricsTest < Minitest::Test
   include WatchTestHelpers
@@ -8,12 +8,12 @@ class JobMetricsTest < Minitest::Test
   def setup
     @hub = FakeHub.new
     configure_for(@hub)
-    @metrics = SyncRecordWatch::Metrics.new(SyncRecordWatch.configuration)
+    @metrics = WatchClient::Metrics.new(WatchClient.configuration)
     @metrics.define_singleton_method(:ensure_running) { nil }
   end
 
   def teardown
-    SyncRecordWatch.reset!
+    WatchClient.reset!
     @hub.stop
   end
 
@@ -40,32 +40,32 @@ class JobMetricsTest < Minitest::Test
   end
 
   def test_process_monitoring_can_be_turned_off
-    SyncRecordWatch.configuration.process_monitoring = false
+    WatchClient.configuration.process_monitoring = false
     refute @metrics.build_payload.key?("process")
   end
 
   def test_sidekiq_wait_in_seconds_or_milliseconds
     now = Time.now.to_f
-    assert_in_delta 2_000, SyncRecordWatch::SidekiqIntegration.wait_ms({ "enqueued_at" => now - 2 }), 200
-    assert_in_delta 2_000, SyncRecordWatch::SidekiqIntegration.wait_ms({ "enqueued_at" => ((now - 2) * 1000).to_i }), 200
-    assert_nil SyncRecordWatch::SidekiqIntegration.wait_ms({})
+    assert_in_delta 2_000, WatchClient::SidekiqIntegration.wait_ms({ "enqueued_at" => now - 2 }), 200
+    assert_in_delta 2_000, WatchClient::SidekiqIntegration.wait_ms({ "enqueued_at" => ((now - 2) * 1000).to_i }), 200
+    assert_nil WatchClient::SidekiqIntegration.wait_ms({})
   end
 
   def test_active_job_wait_uses_the_later_of_enqueued_and_scheduled
     job = Struct.new(:enqueued_at, :scheduled_at).new((Time.now - 10).utc.iso8601, Time.now - 3)
-    assert_in_delta 3_000, SyncRecordWatch::ActiveJobExtension.wait_ms(job), 300
+    assert_in_delta 3_000, WatchClient::ActiveJobExtension.wait_ms(job), 300
   end
 
   def test_sidekiq_middleware_times_native_jobs_only
-    SyncRecordWatch::Metrics.install!
-    SyncRecordWatch::Metrics.instance.define_singleton_method(:ensure_running) { nil }
-    middleware = SyncRecordWatch::SidekiqIntegration::ServerMiddleware.new
+    WatchClient::Metrics.install!
+    WatchClient::Metrics.instance.define_singleton_method(:ensure_running) { nil }
+    middleware = WatchClient::SidekiqIntegration::ServerMiddleware.new
     middleware.call(nil, { "class" => "ImportWorker", "jid" => "1", "enqueued_at" => Time.now.to_f }, "default") { :ok }
     middleware.call(nil, { "class" => "Wrapper", "wrapped" => "MailJob", "jid" => "2" }, "default") { :ok }
     assert_raises(RuntimeError) do
       middleware.call(nil, { "class" => "ImportWorker", "jid" => "3" }, "default") { raise "boom" }
     end
-    jobs = SyncRecordWatch::Metrics.instance.build_payload["jobs"]
+    jobs = WatchClient::Metrics.instance.build_payload["jobs"]
     assert_equal [ "ImportWorker" ], jobs.map { |job| job["job_class"] }
     assert_equal [ 2, 1 ], [ jobs.first["count"], jobs.first["errors"] ]
   end

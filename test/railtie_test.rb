@@ -9,11 +9,11 @@ rescue LoadError
 end
 
 if defined?(Rails::Application)
-  ENV["SYNCRECORD_WATCH_ENVIRONMENT"] = "production" # the Railtie would otherwise use Rails.env
-  require "syncrecord_watch/railtie"
+  ENV["WATCH_ENVIRONMENT"] = "production" # the Railtie would otherwise use Rails.env
+  require "watch_client/railtie"
 
   # One small Rails app for the whole file (Rails apps can only boot once per process).
-  module LoghubDummy
+  module WatchDummy
     HUB = FakeHub.new
 
     class Application < Rails::Application
@@ -29,8 +29,8 @@ if defined?(Rails::Application)
       config.action_dispatch.show_exceptions = :none
 
       routes.append do
-        get "/hello" => "loghub_dummy/hello#show"
-        get "/boom" => "loghub_dummy/hello#boom"
+        get "/hello" => "watch_dummy/hello#show"
+        get "/boom" => "watch_dummy/hello#boom"
       end
     end
 
@@ -60,9 +60,9 @@ if defined?(Rails::Application)
   end
 
   def configure_dummy_hub
-    SyncRecordWatch.reset!
-    SyncRecordWatch.configure do |c|
-      c.url = LoghubDummy::HUB.url
+    WatchClient.reset!
+    WatchClient.configure do |c|
+      c.url = WatchDummy::HUB.url
       c.api_key = "lh_test_key"
       c.environment = "production"
       c.flush_interval = 60
@@ -72,8 +72,8 @@ if defined?(Rails::Application)
   end
 
   configure_dummy_hub
-  LoghubDummy::Application.initialize!
-  FILTER_KEYS_AFTER_BOOT = SyncRecordWatch.configuration.filter_keys
+  WatchDummy::Application.initialize!
+  FILTER_KEYS_AFTER_BOOT = WatchClient.configuration.filter_keys
 
   class RailtieTest < Minitest::Test
     # Other test files reset the global configuration, so set it up again.
@@ -82,7 +82,7 @@ if defined?(Rails::Application)
     end
 
     def app
-      LoghubDummy::Application
+      WatchDummy::Application
     end
 
     def requests_after(path)
@@ -98,9 +98,9 @@ if defined?(Rails::Application)
     end
 
     def collect_requests
-      SyncRecordWatch.flush
+      WatchClient.flush
       collected = []
-      while (request = LoghubDummy::HUB.next_request(timeout: 0.5))
+      while (request = WatchDummy::HUB.next_request(timeout: 0.5))
         collected << request
       end
       collected
@@ -118,30 +118,30 @@ if defined?(Rails::Application)
       assert_equal "kaboom", notice["message"]
       assert_equal false, notice["handled"]
       assert_equal "incoming-req-1", notice["request_id"]
-      assert_equal "LoghubDummy::HelloController#boom", notice["component"]
+      assert_equal "WatchDummy::HelloController#boom", notice["component"]
       assert_equal "GET", notice["request"]["method"]
       assert_includes notice["request"]["url"], "/boom"
       refute_includes notice["request"]["url"], "secret"
 
       # Richer details (0.3.0)
-      assert_includes notice["breadcrumbs"].map { |c| c["message"] }, "LoghubDummy::HelloController#boom"
+      assert_includes notice["breadcrumbs"].map { |c| c["message"] }, "WatchDummy::HelloController#boom"
       assert_equal "GET", notice["cgi_env"]["REQUEST_METHOD"]
       assert_equal "incoming-req-1", notice["cgi_env"]["HTTP_X_REQUEST_ID"]
       # The visitor's IP is sent once (remote_ip), not again in forwarding headers.
       assert_equal "[FILTERED]", notice["cgi_env"]["HTTP_X_FORWARDED_FOR"]
-      assert_equal "syncrecord_watch", notice["notifier"]["name"]
+      assert_equal "watch_client", notice["notifier"]["name"]
       assert notice["app_env"]["rails_version"]
     end
 
     def test_job_errors_are_reported_through_rails_error
       begin
-        LoghubDummy::FailJob.perform_later
+        WatchDummy::FailJob.perform_later
       rescue ArgumentError
         nil
       end
       notice = collect_requests.flat_map(&:errors).find { |n| n["exception_class"] == "ArgumentError" }
       refute_nil notice
-      assert_equal "LoghubDummy::FailJob", notice["component"]
+      assert_equal "WatchDummy::FailJob", notice["component"]
       assert notice["context"]["job_id"]
     end
 
@@ -166,7 +166,7 @@ if defined?(Rails::Application)
       refute_nil summary
       assert_equal "GET", summary["method"]
       assert_equal 200, summary["status"]
-      assert_equal "LoghubDummy::HelloController", summary["controller"]
+      assert_equal "WatchDummy::HelloController", summary["controller"]
       assert_match(%r{\AGET /hello 200 in \d+ms}, summary["message"])
     end
 
@@ -181,7 +181,7 @@ if defined?(Rails::Application)
       line = entries_after("/hello").find { |e| e["message"] == "greeting Ada" }
       refute_nil line
       assert_equal "incoming-req-1", line["request_id"]
-      assert_equal "LoghubDummy::GreetJob", line["job_class"]
+      assert_equal "WatchDummy::GreetJob", line["job_class"]
       assert line["job_id"]
     end
 

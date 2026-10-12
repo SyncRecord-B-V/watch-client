@@ -3,11 +3,11 @@ require "tmpdir"
 
 class HistogramTest < Minitest::Test
   def test_bucket_index
-    assert_equal 0, SyncRecordWatch::Histogram.index(3)
-    assert_equal 0, SyncRecordWatch::Histogram.index(5)
-    assert_equal 1, SyncRecordWatch::Histogram.index(5.1)
-    assert_equal SyncRecordWatch::Histogram::BOUNDS.size, SyncRecordWatch::Histogram.index(60_000)
-    assert_equal 20, SyncRecordWatch::Histogram.empty.size
+    assert_equal 0, WatchClient::Histogram.index(3)
+    assert_equal 0, WatchClient::Histogram.index(5)
+    assert_equal 1, WatchClient::Histogram.index(5.1)
+    assert_equal WatchClient::Histogram::BOUNDS.size, WatchClient::Histogram.index(60_000)
+    assert_equal 20, WatchClient::Histogram.empty.size
   end
 end
 
@@ -17,12 +17,12 @@ class MetricsTest < Minitest::Test
   def setup
     @hub = FakeHub.new
     configure_for(@hub)
-    @metrics = SyncRecordWatch::Metrics.new(SyncRecordWatch.configuration)
+    @metrics = WatchClient::Metrics.new(WatchClient.configuration)
     @metrics.define_singleton_method(:ensure_running) { nil } # no background thread in tests
   end
 
   def teardown
-    SyncRecordWatch.reset!
+    WatchClient.reset!
     @hub.stop
   end
 
@@ -37,8 +37,8 @@ class MetricsTest < Minitest::Test
     assert_equal 940.0, row["total_ms"]
     assert_equal 900.0, row["max_ms"]
     assert_equal 312.5, row["db_ms"]
-    assert_equal 1, row["buckets"][SyncRecordWatch::Histogram.index(40)]
-    assert_equal 1, row["buckets"][SyncRecordWatch::Histogram.index(900)]
+    assert_equal 1, row["buckets"][WatchClient::Histogram.index(40)]
+    assert_equal 1, row["buckets"][WatchClient::Histogram.index(900)]
     assert_empty @metrics.build_payload["requests"], "buffers are emptied"
   end
 
@@ -60,7 +60,7 @@ class MetricsTest < Minitest::Test
   end
 
   def test_nothing_sent_when_idle_and_process_health_is_off
-    SyncRecordWatch.configuration.process_monitoring = false
+    WatchClient.configuration.process_monitoring = false
     assert @metrics.send_once
     assert_nil @hub.next_request(timeout: 0.2)
   end
@@ -73,27 +73,27 @@ class NetHTTPTimingTest < Minitest::Test
     @hub = FakeHub.new
     @target = FakeHub.new
     configure_for(@hub)
-    SyncRecordWatch::NetHTTPPropagation.install!
-    @metrics = SyncRecordWatch::Metrics.install!
+    WatchClient::NetHTTPPropagation.install!
+    @metrics = WatchClient::Metrics.install!
     @metrics.define_singleton_method(:ensure_running) { nil }
   end
 
   def teardown
-    SyncRecordWatch.reset!
+    WatchClient.reset!
     @hub.stop
     @target.stop
   end
 
   def test_outgoing_calls_are_timed_per_host
-    Thread.current[SyncRecordWatch::NetHTTPPropagation::HTTP_MS_KEY] = 0.0
+    Thread.current[WatchClient::NetHTTPPropagation::HTTP_MS_KEY] = 0.0
     uri = URI("#{@target.url}/orders")
     Net::HTTP.start(uri.host, uri.port) { |http| http.get(uri.path) }
     row = @metrics.build_payload["http"].first
     assert_equal "127.0.0.1:#{uri.port}", row["host"]
     assert_equal 1, row["count"]
-    assert_operator Thread.current[SyncRecordWatch::NetHTTPPropagation::HTTP_MS_KEY], :>, 0
+    assert_operator Thread.current[WatchClient::NetHTTPPropagation::HTTP_MS_KEY], :>, 0
   ensure
-    Thread.current[SyncRecordWatch::NetHTTPPropagation::HTTP_MS_KEY] = nil
+    Thread.current[WatchClient::NetHTTPPropagation::HTTP_MS_KEY] = nil
   end
 
   def test_connection_failures_count
@@ -104,8 +104,8 @@ class NetHTTPTimingTest < Minitest::Test
   end
 
   def test_log_hub_delivery_is_not_counted
-    SyncRecordWatch.log(:info, "hello")
-    SyncRecordWatch.flush(timeout: 2)
+    WatchClient.log(:info, "hello")
+    WatchClient.flush(timeout: 2)
     assert_empty @metrics.build_payload["http"]
   end
 end
@@ -134,7 +134,7 @@ class DependenciesTest < Minitest::Test
     Dir.mktmpdir do |dir|
       path = File.join(dir, "Gemfile.lock")
       File.write(path, LOCKFILE)
-      payload = SyncRecordWatch::Dependencies.payload(SyncRecordWatch::Configuration.new, lockfile: path)
+      payload = WatchClient::Dependencies.payload(WatchClient::Configuration.new, lockfile: path)
       names = payload["gems"].map { |gem| [ gem["name"], gem["version"] ] }
       assert_includes names, [ "rack", "2.2.8" ]
       assert_includes names, [ "nokogiri", "1.15.4" ]
@@ -144,6 +144,6 @@ class DependenciesTest < Minitest::Test
   end
 
   def test_no_lockfile
-    assert_nil SyncRecordWatch::Dependencies.payload(SyncRecordWatch::Configuration.new, lockfile: "/nope/Gemfile.lock")
+    assert_nil WatchClient::Dependencies.payload(WatchClient::Configuration.new, lockfile: "/nope/Gemfile.lock")
   end
 end

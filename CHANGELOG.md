@@ -1,12 +1,19 @@
 # Changelog
 
-## 0.9.0 (unreleased)
+## 0.10.0 (unreleased)
 
-- Renamed: Log Hub is now **Sync Record Watch** (`watch.syncrecord.com`) and the gem is `syncrecord_watch`
-  (`SyncRecordWatch`). Environment variables are `SYNCRECORD_WATCH_*`, rake tasks `watch:*`, the view helper
-  `syncrecord_watch_tag` (loads `watch.js`), the generator `syncrecord_watch:install`.
-- Fully backwards compatible: `require "loghub_client"`, `LoghubClient`, the `LOGHUB_*` variables (read when the new
-  ones are not set), `loghub_browser_tag` and the `loghub:*` tasks keep working.
+- **Renamed to `watch_client`** (repository: github.com/SyncRecord-B-V/watch-client), a clean break with no old names
+  kept. Watch is its own product (powered by SyncRecord):
+  - gem `watch_client`, `require "watch_client"`, module `WatchClient`
+  - environment variables `WATCH_*` (`WATCH_URL`, `WATCH_API_KEY`, `WATCH_BROWSER_KEY`, …)
+  - view helper `watch_tag` (loads `watch.js`), rake tasks `watch:*`, generator `watch_client:install`,
+    initializer `config/initializers/watch_client.rb`
+  - removed: `syncrecord_watch` / `SyncRecordWatch`, `SYNCRECORD_WATCH_*`, `syncrecord_watch_tag`, and the older
+    `loghub_client` / `LoghubClient`, `LOGHUB_*`, `loghub_browser_tag`, `loghub:*` names. See "Upgrading" in the README.
+
+## 0.9.0
+
+- Renamed from loghub_client to syncrecord_watch (superseded by 0.10.0).
 - Privacy (security review, 8 October 2026):
   - Rails' default filter list (passwords, emails, tokens, keys, OTP, card codes, plus IBAN) is always masked, also
     when the app has no `filter_parameters` of its own.
