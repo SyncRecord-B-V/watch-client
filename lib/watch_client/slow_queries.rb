@@ -20,13 +20,13 @@ module WatchClient
     end
 
     # Called for every SQL event; only slow ones do any work.
-    def record(sql:, duration_ms:, name: nil, cached: false, at: Time.now)
+    def record(sql:, duration_ms:, name: nil, cached: false, at: Time.now, connection: nil)
       return false if duration_ms < @config.slow_query_ms.to_f
       return false if cached || name.to_s == 'SCHEMA' || name.to_s == 'CACHE'
       return false if Thread.current[:watch_client_internal]
       return false if SqlNormalizer.transaction_statement?(sql)
 
-      normalized = SqlNormalizer.normalize(sql)
+      normalized = SqlNormalizer.normalize(sql, dialect: connection ? SqlNormalizer.dialect_for(connection) : nil)
       key = SqlNormalizer.fingerprint(normalized)
       request_id = Context.request_id
       @mutex.synchronize do

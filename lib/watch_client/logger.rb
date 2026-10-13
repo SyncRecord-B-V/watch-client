@@ -31,8 +31,9 @@ module WatchClient
       end
 
       if severity >= WARN && Breadcrumbs.recording?
-        Breadcrumbs.add('log', message.is_a?(Exception) ? "#{message.class}: #{message.message}" : message.to_s,
-                        'level' => Entry.level_name(severity))
+        # Same text as the log line: a structured message is filtered before it becomes text.
+        text, = Entry.split_message(message, WatchClient.configuration.filter_keys)
+        Breadcrumbs.add('log', text, 'level' => Entry.level_name(severity))
       end
       return true unless WatchClient.configuration.send_logs
 

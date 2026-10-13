@@ -125,7 +125,7 @@ module WatchClient
       }
       if longest && result['longest_query_s'].to_f >= 1
         result['longest_query'] =
-          SqlNormalizer.normalize(longest['query'])[0, 500]
+          SqlNormalizer.normalize(longest['query'], dialect: :standard)[0, 500]
       end
       result.merge!(rates(counters, now))
       result.compact
@@ -153,8 +153,9 @@ module WatchClient
                   end
         rows = select_all(connection, format(TOP_QUERIES_SQL, **columns))
         queries = rows.map do |row|
-          { 'queryid' => row['queryid'].to_s, 'sql' => SqlNormalizer.normalize(row['query']), 'calls' => int(row['calls']),
-            'total_ms' => float(row['total_ms'])&.round(1), 'mean_ms' => float(row['mean_ms'])&.round(2), 'rows' => int(row['rows']) }
+          { 'queryid' => row['queryid'].to_s, 'sql' => SqlNormalizer.normalize(row['query'], dialect: :standard),
+            'calls' => int(row['calls']), 'total_ms' => float(row['total_ms'])&.round(1),
+            'mean_ms' => float(row['mean_ms'])&.round(2), 'rows' => int(row['rows']) }
         end
         { 'available' => true, 'queries' => queries }
       end

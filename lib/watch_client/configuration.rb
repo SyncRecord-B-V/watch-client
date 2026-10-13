@@ -29,7 +29,8 @@ module WatchClient
     attr_accessor :propagate_request_id, :propagate_to
 
     # Batching and delivery
-    attr_accessor :batch_size, :flush_interval, :max_queue, :max_retries, :shutdown_timeout
+    # max_queue: entries kept in memory per buffer; max_queue_bytes: their total JSON size.
+    attr_accessor :batch_size, :flush_interval, :max_queue, :max_queue_bytes, :max_retries, :shutdown_timeout
 
     # Error tracking
     attr_accessor :send_errors, :report_handled_errors, :ignore_errors, :before_notify,
@@ -80,6 +81,8 @@ module WatchClient
     # (the list a new Rails app starts with, plus IBAN).
     DEFAULT_FILTER_KEYS = %i[passw email secret token _key crypt salt certificate otp ssn cvv cvc iban].freeze
 
+    DEFAULT_MAX_QUEUE_BYTES = 16 * 1024 * 1024
+
     ENV_PREFIX = 'WATCH_'
     LOCAL_HOSTS = %w[localhost 127.0.0.1 ::1].freeze
     LOCAL_SUFFIXES = %w[.localhost .test].freeze
@@ -115,6 +118,7 @@ module WatchClient
       @batch_size = 500
       @flush_interval = 3
       @max_queue = 10_000
+      @max_queue_bytes = DEFAULT_MAX_QUEUE_BYTES
       @max_retries = 4
       @shutdown_timeout = 5
 

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'test_helper'
+require 'watch_client/request_subscriber'
 
 # Secrets and personal data must never reach Watch: log fields, log context, error requests,
 # SQL text, and nothing is sent over plain HTTP to a remote host.
@@ -204,5 +205,195 @@ class SecurityTest < Minitest::Test
     @config.check_ins_enabled = true
     refute WatchClient::CheckIn.ping(@config, 'http://watch.example.com/ping/tok_1')
     assert_match(/https/, @config.diagnostics.string)
+  end
+
+  # Second review (commit 4505593).
+
+  def enable_without_sending
+    @config.url = 'http://127.0.0.1:9'
+    @config.api_key = 'key'
+    @config.enabled = true
+  end
+
+  def test_warning_breadcrumbs_filter_structured_messages_even_without_send_logs
+    enable_without_sending
+    @config.send_logs = false
+    WatchClient::Breadcrumbs.with do
+      WatchClient.logger.warn(password: 'demo-secret', step: 'login')
+      crumb = WatchClient::Breadcrumbs.current.last
+      refute_includes crumb['message'], 'demo-secret'
+      assert_includes crumb['message'], 'password=[FILTERED]'
+    end
+  end
+
+  def test_breadcrumb_metadata_is_filtered
+    WatchClient::Breadcrumbs.with do
+      WatchClient::Breadcrumbs.add('custom', 'x', 'api_token' => 'tok-1', 'nested' => [{ 'password' => 'p' }], 'ok' => 1)
+      metadata = WatchClient::Breadcrumbs.current.last['metadata']
+      assert_equal '[FILTERED]', metadata['api_token']
+      assert_equal '[FILTERED]', metadata['nested'][0]['password']
+      assert_equal 1, metadata['ok']
+    end
+  end
+
+  def test_mysql_strings_are_sanitized
+    mysql = ->(sql) { WatchClient::SqlNormalizer.normalize(sql, dialect: :mysql) }
+    assert_equal 'SELECT * FROM `users` WHERE name = ? AND note = ?',
+                 mysql.call(%q(SELECT * FROM `users` WHERE name = "bob@example.test" AND note = 'it''s' # carol@example.test))
+    refute_includes mysql.call(%q(SELECT * FROM t WHERE a = 'O\'alice@example.test' AND b = 1)), 'alice'
+    assert_equal :mysql, WatchClient::SqlNormalizer.dialect_for('Mysql2')
+    assert_equal :mysql, WatchClient::SqlNormalizer.dialect_for('Trilogy')
+    assert_equal :standard, WatchClient::SqlNormalizer.dialect_for('PostgreSQL')
+  end
+
+  def test_backslash_quotes_never_leak_whatever_the_server_setting
+    [%q(SELECT * FROM t WHERE a = 'O\'alice@example.test' AND b = 1),
+     %q(SELECT 'C:\' , 'secret@example.test')].each do |sql|
+      %i[standard mysql].each do |dialect|
+        refute_match(/alice|secret/, WatchClient::SqlNormalizer.normalize(sql, dialect: dialect), "#{dialect}: #{sql}")
+      end
+    end
+  end
+
+  def test_request_summaries_use_watch_url_filters
+    enable_without_sending
+    @config.filter_keys = [:voucher]
+    sent = []
+    @config.before_send = ->(line) { sent << line && nil }
+    request = Struct.new(:filtered_path).new('/orders?voucher=V-123&page=2')
+    event = Struct.new(:payload, :duration).new(
+      { method: 'GET', status: 200, controller: 'OrdersController', action: 'index', request: request }, 12.0
+    )
+    WatchClient::RequestSubscriber.handle(event)
+    line = sent.last
+    refute_includes JSON.generate(line), 'V-123'
+    assert_equal '/orders?voucher=[FILTERED]&page=2', line['path']
+  end
+
+  def test_url_filters_apply_procs_and_dotted_rules
+    masker = ->(key, value) { value.replace('***') if key == 'credential' && value.is_a?(String) }
+    url = 'https://a.example/?credential=c1&account[credential]=c2&account[name_x]=n&q=1'
+    out = WatchClient::Filter.url(url, [masker])
+    refute_match(/c1|c2/, out)
+    dotted = WatchClient::Filter.url('https://a.example/?account[pin]=1234&pin=ok', ['account.pin'])
+    assert_equal 'https://a.example/?account[pin]=[FILTERED]&pin=ok', dotted
+  end
+
+  def test_huge_fields_are_truncated_per_entry
+    built = entry(message: { event: 'import', blob: 'a' * 2_000_000, rows: 3 })
+    assert_operator JSON.generate(built).bytesize, :<=, WatchClient::Entry::MAX_ENTRY_BYTES
+    assert_equal '[TRUNCATED: 2000002 bytes]', built['blob']
+    assert_equal 3, built['rows']
+  end
+
+  def test_buffer_is_bounded_by_bytes
+    @config.max_queue_bytes = 50_000
+    client = WatchClient::Client.new(@config, flush_interval: 3600, batch_size: 1000)
+    client.define_singleton_method(:ensure_thread!) { nil }
+    40.times { client.push({ 'message' => 'x' * 5_000 }) }
+    stats = client.stats
+    assert_operator stats[:buffered_bytes], :<=, 50_000
+    assert_operator stats[:dropped_queue_full], :>, 0
+    refute client.push({ 'message' => 'y' * 60_000 })
+    assert_equal 1, client.stats[:dropped_too_large]
+  end
+
+  # Third review.
+
+  def test_unencodable_entries_are_dropped_without_touching_the_queue
+    client = WatchClient::Client.new(@config, flush_interval: 3600, batch_size: 1000)
+    client.define_singleton_method(:ensure_thread!) { nil }
+    assert client.push({ 'message' => 'ok' })
+    before = client.stats
+    refute client.push({ 'message' => 'x', 'ratio' => Float::NAN, 'blob' => 'a' * 4_000_000 })
+    after = client.stats
+    assert_equal 1, after[:dropped_unencodable]
+    assert_equal before[:buffered], after[:buffered]
+    assert_equal before[:buffered_bytes], after[:buffered_bytes]
+  end
+
+  def test_conditional_proc_filters_see_the_whole_query
+    rule = lambda do |key, value, params|
+      value.replace('***') if key == 'credential' && params && params['sensitive'] == '1' && value.is_a?(String)
+    end
+    out = WatchClient::Filter.url('https://a.example/?sensitive=1&credential=demo-secret', [rule])
+    refute_includes out, 'demo-secret'
+    assert_equal 'https://a.example/?sensitive=1&credential=[FILTERED]', out
+    kept = WatchClient::Filter.url('https://a.example/?sensitive=0&credential=fine', [rule])
+    assert_equal 'https://a.example/?sensitive=0&credential=fine', kept
+  end
+
+  def test_query_arrays_and_repeats_follow_rack
+    out = WatchClient::Filter.url('https://a.example/?ids[]=1&ids[]=2&tag=a&tag=b&account[pin]=9', ['account.pin'])
+    assert_equal 'https://a.example/?ids[]=1&ids[]=2&tag=a&tag=b&account[pin]=[FILTERED]', out
+  end
+
+  def test_names_rack_would_read_differently_mask_every_value
+    out = WatchClient::Filter.url('https://a.example/?a=1&a[b]=2&page=3', [])
+    assert_equal 'https://a.example/?a=[FILTERED]&a[b]=[FILTERED]&page=[FILTERED]', out
+    out = WatchClient::Filter.url('https://a.example/?list[][id]=1&page=3', [])
+    assert_equal 'https://a.example/?list[][id]=[FILTERED]&page=[FILTERED]', out
+  end
+
+  def test_repeated_parameters_use_the_last_value_and_mask_every_occurrence
+    rule = lambda do |key, value, params|
+      value.replace('***') if key == 'credential' && params && params['sensitive'] == '1' && value.is_a?(String)
+    end
+    out = WatchClient::Filter.url('https://a.example/?sensitive=0&sensitive=1&credential=old&credential=demo-secret', [rule])
+    assert_equal 'https://a.example/?sensitive=0&sensitive=1&credential=[FILTERED]&credential=[FILTERED]', out
+  end
+
+  def test_deep_long_or_crowded_queries_are_left_out
+    deep = "https://a.example/p?x#{'[a]' * 2_000}=1"
+    assert_equal 'https://a.example/p', WatchClient::Filter.url(deep, [])
+    assert_equal 'https://a.example/p', WatchClient::Filter.url("https://a.example/p?q=#{'a' * 5_000}", [])
+    crowded = "https://a.example/p?#{(1..150).map { |n| "p#{n}=1" }.join('&')}"
+    assert_equal 'https://a.example/p', WatchClient::Filter.url(crowded, [])
+  end
+
+  def test_deeply_nested_referrer_reports_safely
+    env = { 'HTTP_REFERER' => "https://other.example/?x#{'[a]' * 2_000}=1" }
+    request = FakeRequest.new(env: env, path: '/', filtered_path: '/')
+    notice = WatchClient::Notice.build(@config, RuntimeError.new('x'), handled: true, request: request)
+    assert_equal 'https://other.example/', notice['request']['referrer']
+  end
+
+  def test_circular_and_deep_data_is_bounded
+    loop_hash = { 'a' => 1 }
+    loop_hash['self'] = loop_hash
+    shared = { 'v' => 1 }
+    deep = (1..100).reduce('end') { |inner, _| { 'n' => inner } }
+    safe = WatchClient::Entry.json_safe('loop' => loop_hash, 'twice' => [shared, shared], 'deep' => deep, 'nan' => Float::NAN)
+    JSON.generate(safe)
+    assert_equal '[CIRCULAR]', safe['loop']['self']
+    assert_equal [{ 'v' => 1 }, { 'v' => 1 }], safe['twice']
+    assert_includes JSON.generate(safe['deep']), '[TOO DEEP]'
+    assert_equal 'NaN', safe['nan']
+  end
+
+  def test_circular_data_from_callbacks_never_raises_into_the_app
+    enable_without_sending
+    @config.before_send = lambda do |line|
+      line['self'] = line
+      line
+    end
+    @config.before_notify = lambda do |notice, _error|
+      notice['context'] = { 'loop' => notice }
+      notice
+    end
+    refute WatchClient.enqueue(:info, 'hello')
+    refute WatchClient.notify(RuntimeError.new('boom'))
+  end
+
+  def test_core_fields_are_bounded_too
+    built = entry(context: { request_id: 'r' * 2_000_000, user_id: 'u' * 2_000_000 }, message: 'm' * 100_000)
+    assert_operator JSON.generate(built).bytesize, :<=, WatchClient::Entry::MAX_ENTRY_BYTES
+    assert_equal WatchClient::Entry::MAX_CORE_CHARS, built['request_id'].length
+  end
+
+  def test_entries_with_nan_still_build_and_encode
+    built = entry(message: { event: 'calc', ratio: Float::NAN, inf: Float::INFINITY })
+    JSON.generate(built)
+    assert_equal 'NaN', built['ratio']
   end
 end

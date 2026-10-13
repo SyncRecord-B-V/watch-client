@@ -25,6 +25,28 @@
     inside nested arrays are filtered at every level. A rule that raises hides all values.
   - HTTPS required: an `http://` `WATCH_URL` or ping URL is refused (one warning, nothing sent) unless the host is
     local (`localhost`, `127.0.0.1`, `::1`, `*.localhost`, `*.test`) or `WATCH_ALLOW_HTTP=true` is set.
+- Security (second review):
+  - Warning breadcrumbs use the filtered log text (`logger.warn(password: "x")` no longer keeps the value, also
+    with `send_logs = false`), and breadcrumb metadata goes through the filter list.
+  - SQL is sanitized per database: MySQL / MariaDB / Trilogy connections treat `"..."` as values, `` `...` `` as
+    identifiers and `#` as a comment. A string whose end depends on backslash settings (`'O\'...'`) is dropped
+    with everything after it, in every dialect.
+  - Request summary lines pass their path through Watch's URL filter (filter list, procs, personal values).
+  - URL query parameters go through the full filter (procs, and `account[credential]` matches the dotted rule
+    `account.credential`).
+  - Memory: one log line is capped at 64 KB (large fields become `[TRUNCATED: n bytes]`), and each buffer at
+    `max_queue_bytes` (16 MB) on top of `max_queue`.
+- Security (third and fourth review):
+  - Never raises into the app on hostile data: every conversion of app data (`json_safe`) is bounded (20 levels,
+    deeper becomes `"[TOO DEEP]"`), detects cycles (`"[CIRCULAR]"`) and turns `NaN` / `Infinity` into text.
+    The fallback filter stops at 32 levels.
+  - An entry JSON can't encode (e.g. a `before_send` / `before_notify` callback added circular data) is dropped
+    and counted as `dropped_unencodable`; the queue and its byte count are untouched.
+  - URL query strings are parsed like Rack (nesting, `ids[]` arrays, a repeated name keeps its last value) and
+    filtered as one params hash, so procs that look at other parameters (`->(key, value, params)`) work in URLs.
+    Every occurrence of a masked parameter is masked. Names Rack would read differently (`a[][b]`, `a=1&a[b]=2`)
+    mask every value. A query over 4 KB, 100 parameters or 8 levels of nesting is left out entirely.
+  - Core columns (`user_id`, `request_id`, `host`...) are capped at 255 characters, so a log line always fits 64 KB.
 
 ## 0.9.0
 

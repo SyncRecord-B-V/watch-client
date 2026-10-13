@@ -32,7 +32,9 @@ module WatchClient
 
       crumb = { 'at' => Time.now.utc.iso8601(3), 'category' => category.to_s,
                 'message' => Entry.clean(message.to_s)[0, MAX_MESSAGE] }
-      crumb['metadata'] = Entry.json_safe(metadata.compact) if metadata && !metadata.empty?
+      if metadata && !metadata.empty?
+        crumb['metadata'] = Filter.hash(Entry.json_safe(metadata.compact), WatchClient.configuration.filter_keys)
+      end
       trail << crumb
       trail.shift while trail.size > WatchClient.configuration.breadcrumbs_max.to_i
       true
@@ -62,8 +64,8 @@ module WatchClient
     # Replaces literal values in SQL with ? so no personal data ends up in a breadcrumb. Same
     # SQL-aware sanitizer as slow / top queries (strings with any escaping, dollar quotes,
     # comments, numbers, bind parameters).
-    def sanitize_sql(sql)
-      SqlNormalizer.normalize(sql)
+    def sanitize_sql(sql, connection = nil)
+      SqlNormalizer.normalize(sql, dialect: connection ? SqlNormalizer.dialect_for(connection) : nil)
     rescue StandardError
       '[SQL]'
     end
@@ -81,7 +83,7 @@ module WatchClient
       on('sql.active_record') do |payload, duration|
         next if payload[:name].to_s == 'SCHEMA' || payload[:name].to_s.start_with?('EXPLAIN')
 
-        add('query', sanitize_sql(payload[:sql]),
+        add('query', sanitize_sql(payload[:sql], payload[:connection]),
             'name' => payload[:name], 'duration_ms' => duration, 'cached' => (payload[:cached] ? true : nil))
       end
       %w[render_template.action_view render_partial.action_view render_collection.action_view].each do |name|

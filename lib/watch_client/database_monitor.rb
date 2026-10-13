@@ -63,7 +63,7 @@ module WatchClient
         duration = (finished - started) * 1000.0
       end
       @slow_queries.record(sql: payload[:sql], duration_ms: duration.to_f, name: payload[:name],
-                           cached: payload[:cached])
+                           cached: payload[:cached], connection: payload[:connection])
       ensure_running
     rescue StandardError
       nil

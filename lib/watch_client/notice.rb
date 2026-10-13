@@ -183,7 +183,7 @@ module WatchClient
       out = {}
       CGI_KEYS.each { |key| out[key] = env[key].to_s[0, 500] if env.key?(key) }
       query = request.respond_to?(:filtered_path) ? request.filtered_path.to_s.split('?', 2)[1] : nil
-      out['QUERY_STRING'] = Filter.query_string(query, config.filter_keys) if query
+      out['QUERY_STRING'] = Filter.query_string(query, config.filter_keys) || FILTERED if query
       %w[REQUEST_URI ORIGINAL_FULLPATH].each do |key|
         out[key] = Filter.url(env[key].to_s, config.filter_keys)[0, 500] if env.key?(key)
       end

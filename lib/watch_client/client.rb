@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
+require 'json'
+
 module WatchClient
   # Buffers entries in memory and delivers them in batches from one background
   # thread. Never blocks or raises into the app:
-  # - the buffer is capped (oldest entries are dropped when full),
+  # - the buffer is capped by count (max_queue) and by size (max_queue_bytes); the oldest
+  #   entries are dropped when full,
   # - failed batches are retried with backoff, then dropped and counted,
   # - after a fork (Puma workers, Sidekiq) the child starts a fresh thread.
   class Client
@@ -17,6 +20,8 @@ module WatchClient
       @mutex = Mutex.new
       @wakeup = ConditionVariable.new
       @buffer = []
+      @sizes = [] # JSON bytes per buffered entry, same order as @buffer
+      @buffer_bytes = 0
       @stats = Hash.new(0)
       @pid = Process.pid
       @thread = nil
@@ -25,12 +30,25 @@ module WatchClient
     end
 
     def push(entry)
+      entry, bytes = self.class.prepare(entry)
       @mutex.synchronize do
         reset_after_fork! if @pid != Process.pid
         return false if @closed
 
+        unless entry
+          @stats[:dropped_unencodable] += 1
+          return false
+        end
+
+        if bytes > max_queue_bytes
+          @stats[:dropped_too_large] += 1
+          return false
+        end
+
         @buffer << entry
-        @buffer.shift(@buffer.size - config.max_queue).size.times { @stats[:dropped_queue_full] += 1 } if @buffer.size > config.max_queue
+        @sizes << bytes
+        @buffer_bytes += bytes
+        drop_oldest while @buffer.size > config.max_queue.to_i || @buffer_bytes > max_queue_bytes
         @stats[:queued] += 1
         ensure_thread!
         @wakeup.signal if @buffer.size >= batch_size
@@ -42,8 +60,17 @@ module WatchClient
       @mutex.synchronize { @buffer.size }
     end
 
+    # [entry, JSON bytes] as it will be sent, or [nil, 0] when JSON can't encode it (e.g. a
+    # before_send / before_notify callback added NaN or circular data). Such an entry is
+    # dropped and counted, never converted here, so the buffer only holds what was measured.
+    def self.prepare(entry)
+      [entry, JSON.generate(entry).bytesize]
+    rescue StandardError, SystemStackError
+      [nil, 0]
+    end
+
     def stats
-      @mutex.synchronize { @stats.dup.merge(buffered: @buffer.size) }
+      @mutex.synchronize { @stats.dup.merge(buffered: @buffer.size, buffered_bytes: @buffer_bytes) }
     end
 
     # Sends everything buffered now, from the calling thread. Used by
@@ -109,7 +136,21 @@ module WatchClient
     end
 
     def take_batch
-      @mutex.synchronize { @buffer.shift(batch_size) }
+      @mutex.synchronize do
+        @buffer_bytes -= @sizes.shift(batch_size).sum
+        @buffer.shift(batch_size)
+      end
+    end
+
+    # Called with the mutex held.
+    def drop_oldest
+      @buffer.shift
+      @buffer_bytes -= @sizes.shift.to_i
+      @stats[:dropped_queue_full] += 1
+    end
+
+    def max_queue_bytes
+      config.max_queue_bytes.to_i.positive? ? config.max_queue_bytes.to_i : Configuration::DEFAULT_MAX_QUEUE_BYTES
     end
 
     def deliver(batch, retries:)
@@ -148,6 +189,8 @@ module WatchClient
     def reset_after_fork!
       @pid = Process.pid
       @buffer.clear
+      @sizes.clear
+      @buffer_bytes = 0
       @thread = nil
       @stopping = false
       @closed = false

@@ -28,7 +28,8 @@ module WatchClient
                              view_ms: payload[:view_runtime], http_ms: Thread.current[NetHTTPPropagation::HTTP_MS_KEY])
       return unless WatchClient.configuration.log_requests
 
-      path = filtered_path(payload)
+      # Rails' filters first, then Watch's own (filter_keys, procs, personal query values).
+      path = Filter.url(filtered_path(payload), WatchClient.configuration.filter_keys)
 
       WatchClient.enqueue(
         status.to_i >= 500 ? :error : :info,

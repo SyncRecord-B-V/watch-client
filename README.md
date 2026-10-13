@@ -344,6 +344,7 @@ migration: `enable_extension "pg_stat_statements"`). Slow queries work with any 
 | --- | --- | --- |
 | `batch_size`, `flush_interval` | `500`, `3` | Lines per request (max 1000); max seconds before a batch is sent |
 | `max_queue` | `10_000` | Buffer cap; the oldest lines are dropped beyond it |
+| `max_queue_bytes` | `16 MB` | Buffer cap by size (JSON); the oldest lines are dropped beyond it. One log line is capped at 64 KB: bigger fields become `[TRUNCATED: n bytes]` |
 | `max_retries`, `timeout` | `4`, `5` | Retries for network errors and 408/425/429/5xx; HTTP timeout in seconds |
 | `shutdown_timeout` | `5` | Seconds to deliver what's left when the process exits |
 | `diagnostics` | `$stderr` | Where the gem reports its own problems (rate-limited); `nil` to silence |
