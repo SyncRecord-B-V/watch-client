@@ -1,19 +1,22 @@
-require "watch_client/version"
-require "watch_client/configuration"
-require "watch_client/context"
-require "watch_client/entry"
-require "watch_client/transport"
-require "watch_client/client"
-require "watch_client/logger"
-require "watch_client/breadcrumbs"
-require "watch_client/app_env"
-require "watch_client/notice"
-require "watch_client/net_http_propagation"
-require "watch_client/browser_tag"
-require "watch_client/check_in"
-require "watch_client/database_monitor"
-require "watch_client/metrics"
-require "watch_client/dependencies"
+# frozen_string_literal: true
+
+require 'watch_client/version'
+require 'watch_client/configuration'
+require 'watch_client/context'
+require 'watch_client/filter'
+require 'watch_client/entry'
+require 'watch_client/transport'
+require 'watch_client/client'
+require 'watch_client/logger'
+require 'watch_client/breadcrumbs'
+require 'watch_client/app_env'
+require 'watch_client/notice'
+require 'watch_client/net_http_propagation'
+require 'watch_client/browser_tag'
+require 'watch_client/check_in'
+require 'watch_client/database_monitor'
+require 'watch_client/metrics'
+require 'watch_client/dependencies'
 
 # Sends a Rails app's logs to Watch.
 #
@@ -108,8 +111,8 @@ module WatchClient
       return false unless enabled? && version
 
       result = Transport.new(configuration, **Transport::DEPLOYS).post(
-        "version" => version.to_s, "environment" => environment.to_s,
-        "revision" => revision, "deployed_by" => deployed_by
+        'version' => version.to_s, 'environment' => environment.to_s,
+        'revision' => revision, 'deployed_by' => deployed_by
       )
       diagnose("deploy not recorded: #{result.error || "HTTP #{result.code}"}") unless result.ok?
       result.ok?
@@ -171,8 +174,8 @@ module WatchClient
 
       entry = Entry.build(configuration, severity: :info,
                                          message: "watch_client test from #{configuration.app_name || 'app'}",
-                                         payload: { "event" => "watch_client.test" })
-      result = Transport.new(configuration).post([ entry ])
+                                         payload: { 'event' => 'watch_client.test' })
+      result = Transport.new(configuration).post([entry])
       if result.ok?
         out.puts "OK: test log accepted by #{configuration.url} (HTTP #{result.code})"
         true
@@ -197,4 +200,4 @@ module WatchClient
   end
 end
 
-require "watch_client/railtie" if defined?(Rails::Railtie)
+require 'watch_client/railtie' if defined?(Rails::Railtie)

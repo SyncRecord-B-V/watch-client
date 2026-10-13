@@ -1,12 +1,14 @@
-require "net/http"
-require "openssl"
+# frozen_string_literal: true
+
+require 'net/http'
+require 'openssl'
 
 module WatchClient
   # Adds X-Request-ID to outgoing Net::HTTP requests (Faraday's default adapter
   # uses Net::HTTP too) while handling a request or job, so another Rails app
   # that receives the call logs under the same request ID.
   module NetHTTPPropagation
-    HEADER = "X-Request-ID".freeze
+    HEADER = 'X-Request-ID'
 
     # Installed for request ID propagation and/or HTTP breadcrumbs.
     def self.install!
@@ -26,15 +28,13 @@ module WatchClient
     end
 
     HTTP_MS_KEY = :watch_client_http_ms
-    TIMEOUTS = [ Net::OpenTimeout, Net::ReadTimeout, Timeout::Error ].freeze
-    TIMEOUTS_WITH_WRITE = (defined?(Net::WriteTimeout) ? TIMEOUTS + [ Net::WriteTimeout ] : TIMEOUTS).freeze
+    TIMEOUTS = [Net::OpenTimeout, Net::ReadTimeout, Timeout::Error].freeze
+    TIMEOUTS_WITH_WRITE = (defined?(Net::WriteTimeout) ? TIMEOUTS + [Net::WriteTimeout] : TIMEOUTS).freeze
 
     def request(req, body = nil, &block)
       internal = Thread.current[:watch_client_internal]
       request_id = WatchClient::Context.request_id
-      if request_id && !internal && req[HEADER].nil? && WatchClient::NetHTTPPropagation.propagate?(address)
-        req[HEADER] = request_id
-      end
+      req[HEADER] = request_id if request_id && !internal && req[HEADER].nil? && WatchClient::NetHTTPPropagation.propagate?(address)
       return super if internal || !started?
 
       breadcrumbs = WatchClient::Breadcrumbs.recording?
@@ -48,23 +48,21 @@ module WatchClient
       begin
         response = super
       rescue *TIMEOUTS_WITH_WRITE
-        failure = "timeout"
+        failure = 'timeout'
         raise
-      rescue SystemCallError, SocketError, IOError, OpenSSL::SSL::SSLError, EOFError
-        failure = "connection"
+      rescue SystemCallError, SocketError, IOError, OpenSSL::SSL::SSLError # EOFError is an IOError
+        failure = 'connection'
         raise
       ensure
         duration = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000
         default_port = use_ssl? ? 443 : 80
         host = port == default_port ? address : "#{address}:#{port}"
-        if Thread.current[HTTP_MS_KEY]
-          Thread.current[HTTP_MS_KEY] += duration
-        end
+        Thread.current[HTTP_MS_KEY] += duration if Thread.current[HTTP_MS_KEY]
         metrics&.record_http(host: host, duration_ms: duration, status: response&.code, failure: failure)
         if breadcrumbs && response
           WatchClient::Breadcrumbs.add(
-            "http", "#{req.method} #{use_ssl? ? 'https' : 'http'}://#{host}#{req.path.to_s.split('?').first} #{response.code}",
-            "duration_ms" => duration.round(1)
+            'http', "#{req.method} #{use_ssl? ? 'https' : 'http'}://#{host}#{req.path.to_s.split('?').first} #{response.code}",
+            'duration_ms' => duration.round(1)
           )
         end
       end

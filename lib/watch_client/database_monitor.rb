@@ -1,6 +1,8 @@
-require "time"
-require "watch_client/slow_queries"
-require "watch_client/database_sampler"
+# frozen_string_literal: true
+
+require 'time'
+require 'watch_client/slow_queries'
+require 'watch_client/database_sampler'
 
 module WatchClient
   # Database monitoring: slow queries (from "sql.active_record"), plus a sample of
@@ -23,7 +25,7 @@ module WatchClient
         return nil unless config.database_monitoring && defined?(::ActiveSupport::Notifications)
 
         @instance = new(config)
-        @subscriber = ::ActiveSupport::Notifications.subscribe("sql.active_record") do |*args|
+        @subscriber = ::ActiveSupport::Notifications.subscribe('sql.active_record') do |*args|
           @instance&.observe(*args)
         end
         @instance
@@ -60,7 +62,8 @@ module WatchClient
         _name, started, finished, _id, payload = args
         duration = (finished - started) * 1000.0
       end
-      @slow_queries.record(sql: payload[:sql], duration_ms: duration.to_f, name: payload[:name], cached: payload[:cached])
+      @slow_queries.record(sql: payload[:sql], duration_ms: duration.to_f, name: payload[:name],
+                           cached: payload[:cached])
       ensure_running
     rescue StandardError
       nil
@@ -76,7 +79,7 @@ module WatchClient
         @ticks = 0
         @sampler = nil # a forked child must not reuse the parent's counters
         @thread = Thread.new { run }
-        @thread.name = "watch-database" if @thread.respond_to?(:name=)
+        @thread.name = 'watch-database' if @thread.respond_to?(:name=)
       end
     end
 
@@ -90,16 +93,16 @@ module WatchClient
       @ticks += 1
       sampler = self.sampler
       payload = {
-        "sampled_at" => now.utc.iso8601, "host" => @config.host.to_s, "pid" => Process.pid,
-        "environment" => @config.environment.to_s, "interval_s" => interval
+        'sampled_at' => now.utc.iso8601, 'host' => @config.host.to_s, 'pid' => Process.pid,
+        'environment' => @config.environment.to_s, 'interval_s' => interval
       }
       if sampler
-        payload["pool"] = sampler.pool_stats
-        payload["health"] = sampler.health(now: now)
-        payload["top_queries"] = sampler.top_queries if (@ticks % TOP_QUERIES_EVERY) == 1
-        payload["tables"] = sampler.tables if (@ticks % TABLES_EVERY) == 2
+        payload['pool'] = sampler.pool_stats
+        payload['health'] = sampler.health(now: now)
+        payload['top_queries'] = sampler.top_queries if (@ticks % TOP_QUERIES_EVERY) == 1
+        payload['tables'] = sampler.tables if (@ticks % TABLES_EVERY) == 2
       end
-      payload["slow_queries"] = @slow_queries.take
+      payload['slow_queries'] = @slow_queries.take
       payload.compact
     end
 
@@ -115,7 +118,7 @@ module WatchClient
     end
 
     def interval
-      [ @config.database_interval.to_i, MIN_INTERVAL ].max
+      [@config.database_interval.to_i, MIN_INTERVAL].max
     end
 
     def sampler
@@ -131,7 +134,7 @@ module WatchClient
 
     def run
       # Spread processes over the minute so they don't all query at the same second.
-      sleep(rand * [ interval / 4.0, 10 ].min)
+      sleep(rand * [interval / 4.0, 10].min)
       loop do
         sleep(interval)
         send_once

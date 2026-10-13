@@ -1,42 +1,117 @@
-require "digest"
+# frozen_string_literal: true
+
+require 'digest'
+require 'strscan'
 
 module WatchClient
-  # Turns SQL into a shape without values, so queries that differ only in their
-  # values group together and no data (emails, tokens...) leaves the app:
+  # Turns SQL into a shape without values, so queries that differ only in their values group
+  # together and no data (emails, tokens...) leaves the app. Used for every SQL the gem sends:
+  # slow queries, top queries, the longest running query and query breadcrumbs.
   #
   #   SELECT * FROM users WHERE email = 'a@b.c' AND id IN (1, 2, 3) LIMIT 10
   #   => SELECT * FROM users WHERE email = ? AND id IN (?) LIMIT ?
+  #
+  # A small PostgreSQL-aware scanner rather than regexps, so escapes can't end a string early:
+  # 'it''s', E'it\'s' (backslash escapes), $$...$$ and $tag$...$tag$ dollar quotes, comments
+  # (-- and nested /* */, removed: they can hold data too) and quoted identifiers ("table_2023").
+  # A value or comment whose end is missing (pg_stat_activity cuts queries off at 1 KB) is
+  # dropped with everything after it.
   module SqlNormalizer
     MAX_LENGTH = 2_000
+    CUT = '?…'
 
-    COMMENTS = %r{/\*.*?\*/|--[^\n]*}m
-    # '..' strings and dollar quotes, also tagged ones: $$..$$, $body$..$body$.
-    STRINGS = /'(?:[^']|'')*'|\$(\w*)\$.*?\$\1\$/m
-    # What is left of a string whose end is missing: pg_stat_activity cuts queries off at
-    # track_activity_query_size, sometimes in the middle of a value. Everything from there is dropped.
-    UNTERMINATED = /'|\$\w*\$/
-    # E'..', B'..', X'..' prefixes stay attached to the string they introduce.
-    PREFIXED = /\b[EBX]\?/i
-    NUMBERS = /(?<![\w$."])-?\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/i
-    BIND_PARAMS = /\$\d+\b/
-    BOOLEANS = /\b(?:TRUE|FALSE)\b/i
     LISTS = /\((?:\s*\?\s*,)+\s*\?\s*\)/
     VALUES_ROWS = /(VALUES\s*\(\?\))(?:\s*,\s*\(\?\))+/i
+    WORD = /[[:alpha:]_][[:alnum:]_$]*/
+    NUMBER = /\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?/
+    DOLLAR_TAG = /\$([A-Za-z_]\w*)?\$/
+    STRING_PREFIXES = %w[e b x n].freeze
+    OTHER = %r{[^'"$\-/\w.]+}
 
     module_function
 
     def normalize(sql)
-      text = sql.to_s.dup.force_encoding(Encoding::UTF_8).scrub
-      text = text.gsub(COMMENTS, " ")
-      text = text.gsub(STRINGS, "?").gsub(PREFIXED, "?")
-      if (cut = text.index(UNTERMINATED))
-        text = "#{text[0, cut]}?…"
-      end
-      text = text.gsub(BIND_PARAMS, "?").gsub(NUMBERS, "?").gsub(BOOLEANS, "?")
-      text = text.gsub(/\s+/, " ").strip
-      text = text.gsub(LISTS, "(?)")
+      text = scrub(sql.to_s)
+      text = text.gsub(/\s+/, ' ').strip
+      text = text.gsub(LISTS, '(?)')
       text = text.gsub(VALUES_ROWS, '\1')
       text.length > MAX_LENGTH ? "#{text[0, MAX_LENGTH]}…" : text
+    end
+
+    # Replaces every literal value with ? and removes comments.
+    def scrub(sql)
+      s = StringScanner.new(sql.dup.force_encoding(Encoding::UTF_8).scrub)
+      out = +''
+      until s.eos?
+        if s.skip(/--[^\n]*/)
+          out << ' '
+        elsif s.check(%r{/\*})
+          return out << ' …' unless skip_block_comment(s)
+
+          out << ' '
+        elsif (word = s.scan(WORD))
+          if STRING_PREFIXES.include?(word.downcase) && s.check(/'/)
+            return out << CUT unless skip_string(s, escapes: word.casecmp?('e'))
+
+            out << '?'
+          elsif word.casecmp?('u') && s.check(/&'/)
+            s.skip(/&/)
+            return out << CUT unless skip_string(s, escapes: false)
+
+            out << '?'
+          elsif word.casecmp?('true') || word.casecmp?('false')
+            out << '?'
+          else
+            out << word
+          end
+        elsif s.check(/'/)
+          return out << CUT unless skip_string(s, escapes: false)
+
+          out << '?'
+        elsif s.check(DOLLAR_TAG)
+          tag = s.scan(DOLLAR_TAG)
+          closing = s.search_full(Regexp.new(Regexp.escape(tag)), true, false)
+          return out << CUT unless closing
+
+          out << '?'
+        elsif s.skip(/\$\d+/)
+          out << '?'
+        elsif s.check(/"/)
+          identifier = s.scan(/"(?:[^"]|"")*"/)
+          return out << CUT unless identifier
+
+          out << identifier
+        elsif s.scan(NUMBER)
+          out << '?'
+        else
+          out << (s.scan(OTHER) || s.getch)
+        end
+      end
+      out
+    end
+
+    PLAIN_STRING = /'(?:[^']|'')*'/m
+    ESCAPED_STRING = /'(?:[^'\\]|''|\\.)*'/m
+
+    # 'it''s' or, with escapes (E'...'), 'it\'s'. False when the closing quote is missing.
+    def skip_string(s, escapes:)
+      !s.skip(escapes ? ESCAPED_STRING : PLAIN_STRING).nil?
+    end
+
+    # /* ... */, which PostgreSQL lets nest. False when it never closes.
+    def skip_block_comment(s)
+      depth = 0
+      until s.eos?
+        if s.skip(%r{/\*})
+          depth += 1
+        elsif s.skip(%r{\*/})
+          depth -= 1
+          return true if depth.zero?
+        else
+          s.getch
+        end
+      end
+      false
     end
 
     # Short, stable ID of a normalized query (case and spacing don't matter).

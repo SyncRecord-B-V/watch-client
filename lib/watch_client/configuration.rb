@@ -1,4 +1,7 @@
-require "socket"
+# frozen_string_literal: true
+
+require 'socket'
+require 'uri'
 
 module WatchClient
   # All settings, with defaults read from ENV so most apps only need:
@@ -8,6 +11,10 @@ module WatchClient
 
     # Connection
     attr_accessor :url, :api_key, :app_name, :timeout
+    # Plain http:// is only accepted for local development hosts (localhost, 127.0.0.1, ::1,
+    # *.localhost, *.test). allow_http (WATCH_ALLOW_HTTP=true) accepts it for any host: only for
+    # a private network you trust, the API key travels unencrypted.
+    attr_accessor :allow_http
     # Browser error tracking (watch.js): the app's public browser key from Watch.
     attr_accessor :browser_key, :browser_enabled
     # Heartbeat check-ins (WatchClient.check_in): on outside the test environment.
@@ -73,7 +80,9 @@ module WatchClient
     # (the list a new Rails app starts with, plus IBAN).
     DEFAULT_FILTER_KEYS = %i[passw email secret token _key crypt salt certificate otp ssn cvv cvc iban].freeze
 
-    ENV_PREFIX = "WATCH_".freeze
+    ENV_PREFIX = 'WATCH_'
+    LOCAL_HOSTS = %w[localhost 127.0.0.1 ::1].freeze
+    LOCAL_SUFFIXES = %w[.localhost .test].freeze
 
     # WATCH_<name> (nil when unset or empty).
     def self.env(name)
@@ -82,17 +91,18 @@ module WatchClient
     end
 
     def initialize
-      @url = self.class.env("URL")
-      @api_key = self.class.env("API_KEY")
-      @app_name = self.class.env("APP_NAME")
+      @url = self.class.env('URL')
+      @api_key = self.class.env('API_KEY')
+      @app_name = self.class.env('APP_NAME')
       @timeout = 5
-      @browser_key = self.class.env("BROWSER_KEY")
+      @allow_http = self.class.env('ALLOW_HTTP') == 'true'
+      @browser_key = self.class.env('BROWSER_KEY')
       @browser_enabled = nil # nil = on when url and browser_key are set (and not in test)
 
-      @environment = self.class.env("ENVIRONMENT") || ENV["RAILS_ENV"] || ENV["RACK_ENV"] || "development"
-      @host = ENV["DYNO"] || ENV["HOSTNAME"] || safe_hostname
+      @environment = self.class.env('ENVIRONMENT') || ENV['RAILS_ENV'] || ENV['RACK_ENV'] || 'development'
+      @host = ENV['DYNO'] || ENV['HOSTNAME'] || safe_hostname
       @app_version = detect_app_version
-      @min_level = (self.class.env("MIN_LEVEL") || :info).to_sym
+      @min_level = (self.class.env('MIN_LEVEL') || :info).to_sym
       @send_logs = true
       @log_requests = true
       @current_user_id = nil
@@ -121,17 +131,17 @@ module WatchClient
       @source_frames = 10
       @source_lines = 3
 
-      @database_monitoring = self.class.env("DATABASE_MONITORING") != "false"
-      @slow_query_ms = (self.class.env("SLOW_QUERY_MS") || 500).to_i
+      @database_monitoring = self.class.env('DATABASE_MONITORING') != 'false'
+      @slow_query_ms = (self.class.env('SLOW_QUERY_MS') || 500).to_i
       @before_send_query = nil
       @database_interval = 60
 
-      @performance_monitoring = self.class.env("PERFORMANCE_MONITORING") != "false"
-      @report_dependencies = self.class.env("REPORT_DEPENDENCIES") != "false"
+      @performance_monitoring = self.class.env('PERFORMANCE_MONITORING') != 'false'
+      @report_dependencies = self.class.env('REPORT_DEPENDENCIES') != 'false'
       @browser_vitals = true
       @vitals_sample_rate = 1.0
-      @job_queue_monitoring = self.class.env("JOB_QUEUE_MONITORING") != "false"
-      @process_monitoring = self.class.env("PROCESS_MONITORING") != "false"
+      @job_queue_monitoring = self.class.env('JOB_QUEUE_MONITORING') != 'false'
+      @process_monitoring = self.class.env('PROCESS_MONITORING') != 'false'
 
       @diagnostics = $stderr
       @enabled = nil
@@ -140,22 +150,34 @@ module WatchClient
     # Enabled when URL and key are set, unless switched off explicitly or running tests.
     def browser_enabled?
       return @browser_enabled unless @browser_enabled.nil?
-      return false if environment.to_s == "test"
+      return false if environment.to_s == 'test'
 
-      present?(url) && present?(browser_key)
+      present?(url) && present?(browser_key) && secure_url_or_warn?
     end
 
     def check_ins_enabled?
       return @check_ins_enabled unless @check_ins_enabled.nil?
 
-      environment.to_s != "test"
+      environment.to_s != 'test'
     end
 
     def enabled?
       return @enabled unless @enabled.nil?
-      return false if environment.to_s == "test"
+      return false if environment.to_s == 'test'
 
-      present?(url) && present?(api_key)
+      present?(url) && present?(api_key) && secure_url_or_warn?
+    end
+
+    # Whether data (and the API key) may be sent to this URL: https, or http to a local
+    # development host, or any http when allow_http is on.
+    def secure_url?(value = url)
+      uri = URI.parse(value.to_s.strip)
+      return false if uri.host.nil? || uri.host.empty?
+      return true if uri.scheme == 'https'
+
+      uri.scheme == 'http' && (allow_http == true || local_host?(uri.host))
+    rescue URI::Error
+      false
     end
 
     def min_level_index
@@ -164,14 +186,36 @@ module WatchClient
 
     def validate!
       problems = []
-      problems << "url is missing (WATCH_URL)" unless present?(url)
-      problems << "api_key is missing (WATCH_API_KEY)" unless present?(api_key)
-      problems << "batch_size must be 1..1000" unless (1..1000).cover?(batch_size.to_i)
+      problems << 'url is missing (WATCH_URL)' unless present?(url)
+      problems << 'api_key is missing (WATCH_API_KEY)' unless present?(api_key)
+      if present?(url) && !secure_url?
+        problems << 'url must use https:// (http:// only for localhost / *.test, or set WATCH_ALLOW_HTTP=true)'
+      end
+      problems << 'batch_size must be 1..1000' unless (1..1000).cover?(batch_size.to_i)
       problems << "min_level must be one of #{LEVELS.join(', ')}" unless LEVELS.include?(min_level.to_s.downcase.to_sym)
       problems
     end
 
     private
+
+    def local_host?(host)
+      name = host.to_s.downcase.delete_prefix('[').delete_suffix(']')
+      LOCAL_HOSTS.include?(name) || name.match?(/\A127\.\d{1,3}\.\d{1,3}\.\d{1,3}\z/) || LOCAL_SUFFIXES.any? do |suffix|
+        name.end_with?(suffix)
+      end
+    end
+
+    # Off for an insecure URL, with one warning (the URL is configured, so it is a mistake).
+    def secure_url_or_warn?
+      return true if secure_url?
+
+      unless @insecure_url_warned
+        @insecure_url_warned = true
+        WatchClient.diagnose('not sending anything: WATCH_URL must use https:// ' \
+                             '(http:// only for localhost / *.test, or set WATCH_ALLOW_HTTP=true)')
+      end
+      false
+    end
 
     def present?(value)
       !value.nil? && !value.to_s.strip.empty?
@@ -180,11 +224,11 @@ module WatchClient
     def safe_hostname
       Socket.gethostname
     rescue StandardError
-      "unknown"
+      'unknown'
     end
 
     def detect_app_version
-      value = self.class.env("APP_VERSION") || ENV["HEROKU_SLUG_COMMIT"] || ENV["GIT_SHA"] || ENV["SOURCE_VERSION"]
+      value = self.class.env('APP_VERSION') || ENV['HEROKU_SLUG_COMMIT'] || ENV['GIT_SHA'] || ENV['SOURCE_VERSION']
       value && value[0, 12]
     end
   end

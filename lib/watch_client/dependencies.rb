@@ -1,5 +1,7 @@
-require "digest"
-require "time"
+# frozen_string_literal: true
+
+require 'digest'
+require 'time'
 
 module WatchClient
   # Tells Watch which gem versions the app runs (from Gemfile.lock), plus Ruby and
@@ -14,10 +16,15 @@ module WatchClient
       return nil if gems.empty?
 
       {
-        "environment" => config.environment.to_s, "host" => config.host.to_s, "version" => config.app_version,
-        "ruby" => RUBY_VERSION, "rails" => (defined?(::Rails) && ::Rails.respond_to?(:version) ? ::Rails.version : nil),
-        "gems" => gems, "digest" => Digest::SHA256.hexdigest(gems.map { |gem| "#{gem['name']} #{gem['version']}" }.sort.join("\n"))
+        'environment' => config.environment.to_s, 'host' => config.host.to_s, 'version' => config.app_version,
+        'ruby' => RUBY_VERSION, 'rails' => (defined?(::Rails) && ::Rails.respond_to?(:version) ? ::Rails.version : nil),
+        'gems' => gems, 'digest' => digest(gems)
       }.compact
+    end
+
+    # Changes only when a gem or version changes (order doesn't matter).
+    def digest(gems)
+      Digest::SHA256.hexdigest(gems.map { |gem| "#{gem['name']} #{gem['version']}" }.sort.join("\n"))
     end
 
     # [{ "name" => "rack", "version" => "3.1.8" }, ...] from a Gemfile.lock (the GEM / GIT / PATH specs).
@@ -26,10 +33,14 @@ module WatchClient
 
       text = File.read(lockfile)
       if defined?(::Bundler::LockfileParser)
-        ::Bundler::LockfileParser.new(text).specs.map { |spec| { "name" => spec.name, "version" => spec.version.to_s } }.uniq
+        ::Bundler::LockfileParser.new(text).specs.map do |spec|
+          { 'name' => spec.name, 'version' => spec.version.to_s }
+        end.uniq
       else
         # "    nokogiri (1.15.4-arm64-darwin)": the platform after the first "-" isn't part of the version.
-        text.scan(/^    ([A-Za-z0-9_.-]+) \(([^)\s,]+)\)$/).map { |name, version| { "name" => name, "version" => version.split("-").first } }.uniq
+        text.scan(/^    ([A-Za-z0-9_.-]+) \(([^)\s,]+)\)$/).map do |name, version|
+          { 'name' => name, 'version' => version.split('-').first }
+        end.uniq
       end
     rescue StandardError
       []
@@ -66,7 +77,7 @@ module WatchClient
 
     def server_process?
       defined?(::Rails::Server) || defined?(::Puma::Server) || defined?(::Sidekiq::CLI) ||
-        defined?(::SolidQueue::Supervisor) && $PROGRAM_NAME.include?("jobs")
+        defined?(::SolidQueue::Supervisor) && $PROGRAM_NAME.include?('jobs')
     end
   end
 end

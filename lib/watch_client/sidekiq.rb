@@ -1,10 +1,13 @@
+# frozen_string_literal: true
+
 module WatchClient
   # Native Sidekiq jobs (ActiveJob jobs on Sidekiq are covered by ActiveJobExtension too):
   # - client middleware stores the current request ID in the job,
   # - server middleware puts request_id, job_id and job_class in the log context.
   module SidekiqIntegration
-    JOB_KEY = "watch_request_id".freeze
+    JOB_KEY = 'watch_request_id'
 
+    # Copies the current request ID into the job when it is pushed.
     class ClientMiddleware
       def call(_worker_class, job, _queue, _redis_pool = nil)
         request_id = WatchClient::Context.request_id
@@ -13,12 +16,13 @@ module WatchClient
       end
     end
 
+    # Runs the job inside a log context (request_id, job_id, job_class, queue) and times it.
     class ServerMiddleware
       def call(_worker, job, queue)
         WatchClient::Context.with(
           request_id: job[JOB_KEY],
-          job_id: job["jid"],
-          job_class: job["wrapped"] || job["class"],
+          job_id: job['jid'],
+          job_class: job['wrapped'] || job['class'],
           queue: queue
         ) do
           started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -32,10 +36,10 @@ module WatchClient
             raise
           ensure
             # ActiveJob jobs ("wrapped") are timed by the ActiveJob hook instead.
-            unless job["wrapped"]
-              WatchClient::Metrics.record_job(job_class: job["class"].to_s, queue: queue, failed: failed,
-                                               wait_ms: SidekiqIntegration.wait_ms(job),
-                                               duration_ms: (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000)
+            unless job['wrapped']
+              WatchClient::Metrics.record_job(job_class: job['class'].to_s, queue: queue, failed: failed,
+                                              wait_ms: SidekiqIntegration.wait_ms(job),
+                                              duration_ms: (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000)
             end
           end
         end
@@ -48,15 +52,15 @@ module WatchClient
 
       def call(exception, context, _config = nil)
         job = (context && context[:job]) || {}
-        WatchClient.with_context(request_id: job[JOB_KEY], job_id: job["jid"]) do
+        WatchClient.with_context(request_id: job[JOB_KEY], job_id: job['jid']) do
           WatchClient.notify(
             exception,
             handled: false,
-            component: job["wrapped"] || job["class"],
+            component: job['wrapped'] || job['class'],
             context: {
-              "sidekiq" => {
-                "jid" => job["jid"], "queue" => job["queue"], "class" => job["class"],
-                "wrapped" => job["wrapped"], "retry_count" => job["retry_count"]
+              'sidekiq' => {
+                'jid' => job['jid'], 'queue' => job['queue'], 'class' => job['class'],
+                'wrapped' => job['wrapped'], 'retry_count' => job['retry_count']
               }.compact
             }
           )
@@ -68,11 +72,11 @@ module WatchClient
 
     # enqueued_at is seconds (Sidekiq 7) or milliseconds (Sidekiq 8) since the epoch.
     def self.wait_ms(job)
-      value = job["enqueued_at"]
+      value = job['enqueued_at']
       return nil unless value.is_a?(Numeric)
 
       seconds = value > 1e11 ? value / 1000.0 : value.to_f
-      [ (Time.now.to_f - seconds) * 1000, 0 ].max
+      [(Time.now.to_f - seconds) * 1000, 0].max
     end
 
     def self.install!

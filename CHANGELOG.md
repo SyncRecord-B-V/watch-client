@@ -10,6 +10,21 @@
     initializer `config/initializers/watch_client.rb`
   - removed: `syncrecord_watch` / `SyncRecordWatch`, `SYNCRECORD_WATCH_*`, `syncrecord_watch_tag`, and the older
     `loghub_client` / `LoghubClient`, `LOGHUB_*`, `loghub_browser_tag`, `loghub:*` names. See "Upgrading" in the README.
+- Security (review, 13 October 2026):
+  - Structured logs: fields are filtered before the fallback message text is built from them, so
+    `logger.info(password: "x")` no longer shows the value in the message.
+  - `with_context` fields go through the filter list too (an `api_key` in the context is masked).
+  - One SQL-aware sanitizer for breadcrumbs, slow, top and longest-running queries: handles `E'...'` backslash
+    escapes, `''`, dollar quotes, nested and line comments (removed), `$1` bind params and cut-off values.
+    Breadcrumb SQL now shows `?` instead of `$1`.
+  - Error reports: the request URL, referrer, `Referer` header, `QUERY_STRING`, `REQUEST_URI` and
+    `ORIGINAL_FULLPATH` have secret or personal query values masked (filter list plus token, key, auth, code,
+    email, name, phone, address, postcode, IBAN, birth date) and the `#fragment` removed.
+  - Filtering supports every Rails `filter_parameters` rule: in Rails it uses `ActiveSupport::ParameterFilter`
+    (procs, dotted rules like `"account.credential"`, regexps); without Rails the same rules are applied. Hashes
+    inside nested arrays are filtered at every level. A rule that raises hides all values.
+  - HTTPS required: an `http://` `WATCH_URL` or ping URL is refused (one warning, nothing sent) unless the host is
+    local (`localhost`, `127.0.0.1`, `::1`, `*.localhost`, `*.test`) or `WATCH_ALLOW_HTTP=true` is set.
 
 ## 0.9.0
 

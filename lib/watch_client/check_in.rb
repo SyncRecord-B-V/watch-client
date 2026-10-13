@@ -1,5 +1,7 @@
-require "net/http"
-require "uri"
+# frozen_string_literal: true
+
+require 'net/http'
+require 'uri'
 
 module WatchClient
   # Heartbeat check-ins for cron jobs and workers: calls Watch's ping URL
@@ -16,15 +18,20 @@ module WatchClient
       uri = ping_uri(config, token_or_url, failed)
       return false unless uri
 
+      unless config.secure_url?(uri.to_s)
+        WatchClient.diagnose('check-in not sent: the ping URL must use https:// (http:// only for localhost / *.test)')
+        return false
+      end
+
       http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = uri.scheme == "https"
+      http.use_ssl = uri.scheme == 'https'
       http.open_timeout = config.timeout
       http.read_timeout = config.timeout
       http.write_timeout = config.timeout
 
       request = Net::HTTP::Post.new(uri.request_uri)
-      request["Content-Type"] = "text/plain; charset=utf-8"
-      request["User-Agent"] = "watch_client/#{VERSION} ruby/#{RUBY_VERSION}"
+      request['Content-Type'] = 'text/plain; charset=utf-8'
+      request['User-Agent'] = "watch_client/#{VERSION} ruby/#{RUBY_VERSION}"
       request.body = message.to_s[0, MESSAGE_LIMIT]
 
       Thread.current[:watch_client_internal] = true
@@ -45,13 +52,13 @@ module WatchClient
       value = token_or_url.to_s.strip
       return nil if value.empty?
 
-      base = if value.start_with?("http://", "https://")
-               value.sub(%r{/(fail|success)\z}, "")
-      else
+      base = if value.start_with?('http://', 'https://')
+               value.sub(%r{/(fail|success)\z}, '')
+             else
                return nil if config.url.to_s.empty?
 
                "#{config.url.to_s.chomp('/')}/ping/#{URI.encode_www_form_component(value)}"
-      end
+             end
       URI(failed ? "#{base}/fail" : base)
     end
   end

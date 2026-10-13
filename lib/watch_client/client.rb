@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module WatchClient
   # Buffers entries in memory and delivers them in batches from one background
   # thread. Never blocks or raises into the app:
@@ -28,9 +30,7 @@ module WatchClient
         return false if @closed
 
         @buffer << entry
-        if @buffer.size > config.max_queue
-          @buffer.shift(@buffer.size - config.max_queue).size.times { @stats[:dropped_queue_full] += 1 }
-        end
+        @buffer.shift(@buffer.size - config.max_queue).size.times { @stats[:dropped_queue_full] += 1 } if @buffer.size > config.max_queue
         @stats[:queued] += 1
         ensure_thread!
         @wakeup.signal if @buffer.size >= batch_size
@@ -88,7 +88,7 @@ module WatchClient
       return if @thread&.alive?
 
       @thread = Thread.new { run }
-      @thread.name = "watch_client" if @thread.respond_to?(:name=)
+      @thread.name = 'watch_client' if @thread.respond_to?(:name=)
       @thread.report_on_exception = false
     end
 
@@ -133,7 +133,7 @@ module WatchClient
     end
 
     def backoff(attempt)
-      [ 2**(attempt - 1), 30 ].min + rand * 0.5
+      [2**(attempt - 1), 30].min + rand * 0.5
     end
 
     def stopping?

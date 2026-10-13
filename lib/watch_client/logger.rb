@@ -1,4 +1,6 @@
-require "logger"
+# frozen_string_literal: true
+
+require 'logger'
 
 module WatchClient
   # A ::Logger that sends every line to Watch instead of writing to an IO.
@@ -29,12 +31,12 @@ module WatchClient
       end
 
       if severity >= WARN && Breadcrumbs.recording?
-        Breadcrumbs.add("log", message.is_a?(Exception) ? "#{message.class}: #{message.message}" : message.to_s,
-                        "level" => Entry.level_name(severity))
+        Breadcrumbs.add('log', message.is_a?(Exception) ? "#{message.class}: #{message.message}" : message.to_s,
+                        'level' => Entry.level_name(severity))
       end
       return true unless WatchClient.configuration.send_logs
 
-      WatchClient.enqueue(severity, message, payload: progname ? { "progname" => progname.to_s } : nil)
+      WatchClient.enqueue(severity, message, payload: progname ? { 'progname' => progname.to_s } : nil)
       true
     rescue StandardError
       true

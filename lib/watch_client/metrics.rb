@@ -1,7 +1,9 @@
-require "time"
-require "watch_client/histogram"
-require "watch_client/process_stats"
-require "watch_client/job_queues"
+# frozen_string_literal: true
+
+require 'time'
+require 'watch_client/histogram'
+require 'watch_client/process_stats'
+require 'watch_client/job_queues'
 
 module WatchClient
   # Performance numbers, added up per minute and sent once a minute to
@@ -65,13 +67,13 @@ module WatchClient
         row = @requests[endpoint] ||= begin
           return if @requests.size >= MAX_ENDPOINTS
 
-          new_row.merge("db_ms" => 0.0, "view_ms" => 0.0, "http_ms" => 0.0)
+          new_row.merge('db_ms' => 0.0, 'view_ms' => 0.0, 'http_ms' => 0.0)
         end
         add(row, duration_ms)
-        row["errors"] += 1 if status.to_i >= 500
-        row["db_ms"] += db_ms.to_f
-        row["view_ms"] += view_ms.to_f
-        row["http_ms"] += http_ms.to_f
+        row['errors'] += 1 if status.to_i >= 500
+        row['db_ms'] += db_ms.to_f
+        row['view_ms'] += view_ms.to_f
+        row['http_ms'] += http_ms.to_f
       end
       ensure_running
     rescue StandardError
@@ -86,14 +88,14 @@ module WatchClient
         row = @http[host] ||= begin
           return if @http.size >= MAX_HOSTS
 
-          new_row.merge("client_errors" => 0, "timeouts" => 0, "failures" => 0)
+          new_row.merge('client_errors' => 0, 'timeouts' => 0, 'failures' => 0)
         end
         add(row, duration_ms)
         code = status.to_i
-        row["errors"] += 1 if code >= 500 || failure
-        row["client_errors"] += 1 if code.between?(400, 499)
-        row["failures"] += 1 if failure
-        row["timeouts"] += 1 if failure == "timeout"
+        row['errors'] += 1 if code >= 500 || failure
+        row['client_errors'] += 1 if code.between?(400, 499)
+        row['failures'] += 1 if failure
+        row['timeouts'] += 1 if failure == 'timeout'
       end
       ensure_running
     rescue StandardError
@@ -108,14 +110,14 @@ module WatchClient
         row = @jobs[job_class] ||= begin
           return if @jobs.size >= MAX_JOB_CLASSES
 
-          new_row.merge("queue" => queue.to_s, "wait_ms" => 0.0, "wait_max_ms" => 0.0)
+          new_row.merge('queue' => queue.to_s, 'wait_ms' => 0.0, 'wait_max_ms' => 0.0)
         end
         add(row, duration_ms)
-        row["errors"] += 1 if failed
+        row['errors'] += 1 if failed
         if wait_ms
-          wait = [ wait_ms.to_f, 0 ].max
-          row["wait_ms"] += wait
-          row["wait_max_ms"] = wait if wait > row["wait_max_ms"]
+          wait = [wait_ms.to_f, 0].max
+          row['wait_ms'] += wait
+          row['wait_max_ms'] = wait if wait > row['wait_max_ms']
         end
       end
       ensure_running
@@ -126,26 +128,28 @@ module WatchClient
     # The minute's numbers, emptying the buffers. Public for tests.
     def build_payload(now: Time.now)
       requests, http, jobs = @mutex.synchronize do
-        taken = [ @requests, @http, @jobs ]
+        taken = [@requests, @http, @jobs]
         @requests = {}
         @http = {}
         @jobs = {}
         taken
       end
       {
-        "sampled_at" => now.utc.iso8601, "host" => @config.host.to_s, "pid" => Process.pid,
-        "environment" => @config.environment.to_s, "version" => @config.app_version,
-        "requests" => requests.map { |name, row| finish(row).merge("endpoint" => name) },
-        "http" => http.map { |name, row| finish(row).merge("host" => name) },
-        "jobs" => jobs.map { |name, row| finish(row).merge("job_class" => name) },
-        "queues" => (@config.job_queue_monitoring ? JobQueues.sample : nil),
-        "process" => (@config.process_monitoring ? @process.sample : nil)
+        'sampled_at' => now.utc.iso8601, 'host' => @config.host.to_s, 'pid' => Process.pid,
+        'environment' => @config.environment.to_s, 'version' => @config.app_version,
+        'requests' => requests.map { |name, row| finish(row).merge('endpoint' => name) },
+        'http' => http.map { |name, row| finish(row).merge('host' => name) },
+        'jobs' => jobs.map { |name, row| finish(row).merge('job_class' => name) },
+        'queues' => (@config.job_queue_monitoring ? JobQueues.sample : nil),
+        'process' => (@config.process_monitoring ? @process.sample : nil)
       }.compact
     end
 
     def send_once(now: Time.now)
       payload = build_payload(now: now)
-      return true if %w[requests http jobs].all? { |key| payload[key].empty? } && !payload["process"] && !payload["queues"]
+      return true if %w[requests http jobs].all? do |key|
+        payload[key].empty?
+      end && !payload['process'] && !payload['queues']
 
       result = transport.post(payload)
       result = transport.post(payload) if result.retry?
@@ -164,7 +168,7 @@ module WatchClient
 
         @pid = Process.pid
         @thread = Thread.new { run }
-        @thread.name = "watch-metrics" if @thread.respond_to?(:name=)
+        @thread.name = 'watch-metrics' if @thread.respond_to?(:name=)
       end
     end
 
@@ -176,15 +180,15 @@ module WatchClient
     private
 
     def new_row
-      { "count" => 0, "errors" => 0, "total_ms" => 0.0, "max_ms" => 0.0, "buckets" => Histogram.empty }
+      { 'count' => 0, 'errors' => 0, 'total_ms' => 0.0, 'max_ms' => 0.0, 'buckets' => Histogram.empty }
     end
 
     def add(row, duration_ms)
       ms = duration_ms.to_f
-      row["count"] += 1
-      row["total_ms"] += ms
-      row["max_ms"] = ms if ms > row["max_ms"]
-      row["buckets"][Histogram.index(ms)] += 1
+      row['count'] += 1
+      row['total_ms'] += ms
+      row['max_ms'] = ms if ms > row['max_ms']
+      row['buckets'][Histogram.index(ms)] += 1
     end
 
     def finish(row)
@@ -192,7 +196,7 @@ module WatchClient
     end
 
     def interval
-      [ @config.database_interval.to_i, MIN_INTERVAL ].max
+      [@config.database_interval.to_i, MIN_INTERVAL].max
     end
 
     def run

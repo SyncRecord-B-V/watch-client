@@ -1,10 +1,12 @@
-require "net/http"
-require "uri"
-require "json"
-require "zlib"
+# frozen_string_literal: true
+
+require 'net/http'
+require 'uri'
+require 'json'
+require 'zlib'
 
 module WatchClient
-  # Sends one batch to Watch over HTTPS (gzip JSON). Keeps one persistent
+  # Sends one batch to Watch over HTTPS (gzip JSON; plain HTTP only to local hosts). Keeps one persistent
   # connection per transport. Returns a Result telling the caller what to do.
   class Transport
     Result = Struct.new(:status, :code, :error, keyword_init: true) do
@@ -13,18 +15,18 @@ module WatchClient
       def drop? = status == :drop
     end
 
-    RETRYABLE_CODES = [ 408, 425, 429, 500, 502, 503, 504 ].freeze
+    RETRYABLE_CODES = [408, 425, 429, 500, 502, 503, 504].freeze
     NETWORK_ERRORS = [
       IOError, EOFError, SocketError, SystemCallError, Timeout::Error,
       Net::OpenTimeout, Net::ReadTimeout, Net::HTTPBadResponse, Zlib::Error
     ].freeze
 
-    LOGS = { path: "/api/v1/logs", key: "entries" }.freeze
-    ERRORS = { path: "/api/v1/errors", key: "errors" }.freeze
-    DEPLOYS = { path: "/api/v1/deploys", key: nil }.freeze
-    DATABASE = { path: "/api/v1/database", key: nil }.freeze
-    METRICS = { path: "/api/v1/metrics", key: nil }.freeze
-    DEPENDENCIES = { path: "/api/v1/dependencies", key: nil }.freeze
+    LOGS = { path: '/api/v1/logs', key: 'entries' }.freeze
+    ERRORS = { path: '/api/v1/errors', key: 'errors' }.freeze
+    DEPLOYS = { path: '/api/v1/deploys', key: nil }.freeze
+    DATABASE = { path: '/api/v1/database', key: nil }.freeze
+    METRICS = { path: '/api/v1/metrics', key: nil }.freeze
+    DEPENDENCIES = { path: '/api/v1/dependencies', key: nil }.freeze
 
     # path: API path on the hub; key: the JSON key that wraps a batch (nil = send the object as is).
     def initialize(config, path: LOGS[:path], key: LOGS[:key])
@@ -35,16 +37,20 @@ module WatchClient
       @http = nil
     end
 
+    class InsecureURL < StandardError; end
+
     # items: an Array (batch, wrapped in { key => items }) or a Hash sent as is.
     def post(items)
       body = encode(@key ? { @key => items } : items)
-      return Result.new(status: :drop, error: "could not encode batch") unless body
+      return Result.new(status: :drop, error: 'could not encode batch') unless body
 
       response = @mutex.synchronize { send_request(body) }
       classify(response)
     rescue *NETWORK_ERRORS => e
       reset_connection
       Result.new(status: :retry, error: "#{e.class}: #{e.message}")
+    rescue InsecureURL => e
+      Result.new(status: :drop, error: e.message)
     end
 
     def close
@@ -67,11 +73,17 @@ module WatchClient
 
     def send_request(body)
       uri = endpoint
+      # Never send the API key unencrypted to a remote host (see Configuration#secure_url?).
+      unless @config.secure_url?(uri.to_s)
+        raise InsecureURL,
+              "refusing to send to #{uri.scheme}://#{uri.host}: use https://"
+      end
+
       request = Net::HTTP::Post.new(uri.request_uri)
-      request["Content-Type"] = "application/json"
-      request["Content-Encoding"] = "gzip"
-      request["Authorization"] = "Bearer #{@config.api_key}"
-      request["User-Agent"] = "watch_client/#{VERSION} ruby/#{RUBY_VERSION}"
+      request['Content-Type'] = 'application/json'
+      request['Content-Encoding'] = 'gzip'
+      request['Authorization'] = "Bearer #{@config.api_key}"
+      request['User-Agent'] = "watch_client/#{VERSION} ruby/#{RUBY_VERSION}"
       request.body = body
 
       # Never propagate a request ID onto our own delivery requests.
@@ -101,7 +113,7 @@ module WatchClient
       return @http if @http&.started?
 
       http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = uri.scheme == "https"
+      http.use_ssl = uri.scheme == 'https'
       http.open_timeout = @config.timeout
       http.read_timeout = @config.timeout
       http.write_timeout = @config.timeout if http.respond_to?(:write_timeout=)

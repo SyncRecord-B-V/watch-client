@@ -64,11 +64,12 @@ sends nothing, and it never sends in the `test` environment.
 
 | Variable | Required | Example | What it is |
 | --- | --- | --- | --- |
-| `WATCH_URL` | yes | `https://watch.syncrecord.com` | Watch's address |
+| `WATCH_URL` | yes | `https://watch.syncrecord.com` | Watch's address. Must be `https://` (plain `http://` only for `localhost`, `127.0.0.1`, `::1`, `*.localhost` and `*.test`) |
 | `WATCH_API_KEY` | yes | `lh_3f9a…` | The app's API key from step 1. Keep it secret |
 | `WATCH_APP_NAME` | no | `billing-api` | Only used by `bin/rails watch:test` (the key decides the app) |
 | `WATCH_BROWSER_KEY` | no | `lhb_81c2…` | Browser key from step 1, for JavaScript errors and page speed. Public by design |
 | `WATCH_ENVIRONMENT` | no | `staging` | Overrides `Rails.env` as the environment shown in Watch |
+| `WATCH_ALLOW_HTTP` | no | `true` | Accept `http://` for any host (a private network you trust only: the API key then travels unencrypted) |
 | `WATCH_APP_VERSION` | no | `a1b2c3d` | The deployed version; otherwise read from `GIT_SHA`, `HEROKU_SLUG_COMMIT` or `SOURCE_VERSION` |
 
 Where to set them:
@@ -281,6 +282,7 @@ end
 | Option | Default | What it does |
 | --- | --- | --- |
 | `url`, `api_key` | `WATCH_URL`, `WATCH_API_KEY` | Where to send, and as which app |
+| `allow_http` | `WATCH_ALLOW_HTTP` (off) | Accept `http://` Watch and ping URLs for remote hosts |
 | `enabled` | on when url and key are set, off in `test` | Force sending on or off |
 | `app_name` | `WATCH_APP_NAME` or the app's module name | Shown by `watch:test` |
 | `environment` | `WATCH_ENVIRONMENT`, else `Rails.env` | Environment filter in Watch |

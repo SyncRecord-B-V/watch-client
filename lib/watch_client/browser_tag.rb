@@ -1,4 +1,6 @@
-require "erb"
+# frozen_string_literal: true
+
+require 'erb'
 
 module WatchClient
   # The <script> tag for watch.js (JavaScript errors and page speed), served by Watch itself.
@@ -8,20 +10,20 @@ module WatchClient
     module_function
 
     def html(user_id: nil, environment: nil, version: nil, nonce: nil, config: WatchClient.configuration)
-      return "" unless config.browser_enabled?
+      return '' unless config.browser_enabled?
 
       attributes = {
-        "src" => "#{config.url.to_s.chomp('/')}/watch.js",
-        "data-key" => config.browser_key,
-        "data-environment" => environment || config.environment,
-        "data-version" => version || config.app_version,
-        "data-user-id" => user_id,
-        "data-vitals" => config.browser_vitals ? nil : "false",
-        "data-vitals-sample" => config.browser_vitals && config.vitals_sample_rate.to_f < 1 ? config.vitals_sample_rate.to_f.to_s : nil,
-        "nonce" => nonce
+        'src' => "#{config.url.to_s.chomp('/')}/watch.js",
+        'data-key' => config.browser_key,
+        'data-environment' => environment || config.environment,
+        'data-version' => version || config.app_version,
+        'data-user-id' => user_id,
+        'data-vitals' => config.browser_vitals ? nil : 'false',
+        'data-vitals-sample' => config.browser_vitals && config.vitals_sample_rate.to_f < 1 ? config.vitals_sample_rate.to_f.to_s : nil,
+        'nonce' => nonce
       }.reject { |_name, value| value.nil? || value.to_s.empty? }
 
-      rendered = attributes.map { |name, value| %(#{name}="#{ERB::Util.html_escape(value.to_s)}") }.join(" ")
+      rendered = attributes.map { |name, value| %(#{name}="#{ERB::Util.html_escape(value.to_s)}") }.join(' ')
       %(<script #{rendered} defer></script>)
     end
 

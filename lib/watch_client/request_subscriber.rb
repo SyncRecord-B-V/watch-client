@@ -1,10 +1,12 @@
+# frozen_string_literal: true
+
 module WatchClient
   # One structured summary line per controller action:
   #   "GET /invoices/42 200 in 45ms (InvoicesController#show)"
   # with method, path, status, duration, controller, action, format,
   # view and DB time in the payload. 5xx responses are logged as errors.
   module RequestSubscriber
-    EVENT = "process_action.action_controller".freeze
+    EVENT = 'process_action.action_controller'
 
     module_function
 
@@ -32,17 +34,17 @@ module WatchClient
         status.to_i >= 500 ? :error : :info,
         "#{payload[:method]} #{path} #{status} in #{duration.round}ms (#{action})",
         payload: {
-          "event" => "request",
-          "method" => payload[:method],
-          "path" => path,
-          "status" => status,
-          "duration_ms" => duration,
-          "controller" => payload[:controller],
-          "action" => payload[:action],
-          "format" => payload[:format]&.to_s,
-          "view_ms" => payload[:view_runtime]&.round(1),
-          "db_ms" => payload[:db_runtime]&.round(1),
-          "exception" => payload[:exception]&.first
+          'event' => 'request',
+          'method' => payload[:method],
+          'path' => path,
+          'status' => status,
+          'duration_ms' => duration,
+          'controller' => payload[:controller],
+          'action' => payload[:action],
+          'format' => payload[:format]&.to_s,
+          'view_ms' => payload[:view_runtime]&.round(1),
+          'db_ms' => payload[:db_runtime]&.round(1),
+          'exception' => payload[:exception]&.first
         }.reject { |_, value| value.nil? }
       )
     rescue StandardError
@@ -55,7 +57,7 @@ module WatchClient
       request = payload[:request]
       return request.filtered_path if request.respond_to?(:filtered_path)
 
-      payload[:path].to_s.split("?").first
+      payload[:path].to_s.split('?').first
     end
   end
 end

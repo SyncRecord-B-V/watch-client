@@ -1,27 +1,31 @@
-require "rails/railtie"
-require "watch_client/rack_middleware"
-require "watch_client/request_subscriber"
-require "watch_client/active_job"
-require "watch_client/error_subscriber"
+# frozen_string_literal: true
+
+require 'rails/railtie'
+require 'watch_client/rack_middleware'
+require 'watch_client/request_subscriber'
+require 'watch_client/active_job'
+require 'watch_client/error_subscriber'
 
 module WatchClient
+  # Hooks the gem into a Rails app: defaults from the app, Rack middleware, logger,
+  # error reporting, request / job instrumentation and rake tasks.
   class Railtie < Rails::Railtie
     # Defaults that depend on the Rails app; the app's initializer can still override them.
-    initializer "watch_client.defaults", before: :load_config_initializers do |app|
+    initializer 'watch_client.defaults', before: :load_config_initializers do |app|
       config = WatchClient.configuration
-      config.environment = Rails.env.to_s if WatchClient::Configuration.env("ENVIRONMENT").nil?
+      config.environment = Rails.env.to_s if WatchClient::Configuration.env('ENVIRONMENT').nil?
       config.app_name ||= app.class.module_parent_name.underscore.dasherize
     end
 
-    initializer "watch_client.middleware" do |app|
+    initializer 'watch_client.middleware' do |app|
       app.middleware.insert_after ActionDispatch::RequestId, WatchClient::RackMiddleware
     end
 
-    initializer "watch_client.view_helper" do
+    initializer 'watch_client.view_helper' do
       ActiveSupport.on_load(:action_view) { include WatchClient::BrowserTag::Helper }
     end
 
-    initializer "watch_client.active_job" do
+    initializer 'watch_client.active_job' do
       ActiveSupport.on_load(:active_job) { WatchClient::ActiveJobExtension.install(self) }
     end
 
@@ -40,7 +44,7 @@ module WatchClient
       WatchClient::NetHTTPPropagation.install! if config.propagate_request_id || config.breadcrumbs || config.performance_monitoring
       WatchClient::Breadcrumbs.subscribe! if config.breadcrumbs
       if defined?(::Sidekiq)
-        require "watch_client/sidekiq"
+        require 'watch_client/sidekiq'
         WatchClient::SidekiqIntegration.install!
       end
       WatchClient::Railtie.attach_error_reporting! if config.send_errors
@@ -50,11 +54,11 @@ module WatchClient
     end
 
     rake_tasks do
-      load File.expand_path("tasks.rake", __dir__)
+      load File.expand_path('tasks.rake', __dir__)
     end
 
     generators do
-      require File.expand_path("../generators/watch_client/install/install_generator", __dir__)
+      require File.expand_path('../generators/watch_client/install/install_generator', __dir__)
     end
 
     # Unhandled errors in requests reach the DebugExceptions interceptor (even when Rails
@@ -65,16 +69,16 @@ module WatchClient
 
       @error_reporting_attached = true
       Rails.error.subscribe(WatchClient::ErrorSubscriber.new) if Rails.respond_to?(:error)
-      if defined?(ActionDispatch::DebugExceptions)
-        ActionDispatch::DebugExceptions.register_interceptor do |request, exception|
-          # Report the real error (e.g. the cause inside ActionView::Template::Error), the
-          # same object Rails' executor reports, so it is only sent once.
-          if defined?(ActionDispatch::ExceptionWrapper)
-            cleaner = request.get_header("action_dispatch.backtrace_cleaner")
-            exception = ActionDispatch::ExceptionWrapper.new(cleaner, exception).unwrapped_exception
-          end
-          WatchClient.notify(exception, handled: false, request: request)
+      return unless defined?(ActionDispatch::DebugExceptions)
+
+      ActionDispatch::DebugExceptions.register_interceptor do |request, exception|
+        # Report the real error (e.g. the cause inside ActionView::Template::Error), the
+        # same object Rails' executor reports, so it is only sent once.
+        if defined?(ActionDispatch::ExceptionWrapper)
+          cleaner = request.get_header('action_dispatch.backtrace_cleaner')
+          exception = ActionDispatch::ExceptionWrapper.new(cleaner, exception).unwrapped_exception
         end
+        WatchClient.notify(exception, handled: false, request: request)
       end
     end
 

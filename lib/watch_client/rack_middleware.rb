@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module WatchClient
   # Puts the request ID (from ActionDispatch::RequestId, which also accepts an
   # incoming X-Request-ID from another app) into the log context for the
@@ -10,7 +12,7 @@ module WatchClient
     ENV_KEY = :watch_client_rack_env
 
     def call(env)
-      request_id = env["action_dispatch.request_id"] || env["HTTP_X_REQUEST_ID"]
+      request_id = env['action_dispatch.request_id'] || env['HTTP_X_REQUEST_ID']
       previous_env = Thread.current[ENV_KEY]
       # Kept outside the context so it is never serialized; used by current_user_id ->(env) { ... }.
       Thread.current[ENV_KEY] = env

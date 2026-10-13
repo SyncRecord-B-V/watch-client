@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module WatchClient
   # Raised by `bin/rails watch:test_error`.
   class TestError < StandardError; end
@@ -10,11 +12,12 @@ module WatchClient
     CONTEXT_IVAR = :@__watch_context
     NOTIFIED_IVAR = :@__watch_notified
     MAX_SECTION_BYTES = 16 * 1024
-    FILTERED = "[FILTERED]".freeze
+    FILTERED = '[FILTERED]'
     # Never sent as they are: credentials, the CSRF token, and headers that only repeat the visitor's
     # IP address (it is already in remote_ip; one copy is enough - GDPR data minimisation).
     SECRET_HEADERS = %w[HTTP_COOKIE HTTP_AUTHORIZATION HTTP_PROXY_AUTHORIZATION HTTP_X_API_KEY HTTP_X_CSRF_TOKEN
                         HTTP_X_FORWARDED_FOR HTTP_X_REAL_IP HTTP_CF_CONNECTING_IP HTTP_TRUE_CLIENT_IP HTTP_FORWARDED].freeze
+    URL_HEADERS = %w[HTTP_REFERER].freeze
     CGI_KEYS = %w[REQUEST_METHOD SERVER_NAME SERVER_PORT SERVER_PROTOCOL SERVER_SOFTWARE SCRIPT_NAME PATH_INFO
                   REMOTE_ADDR CONTENT_TYPE CONTENT_LENGTH HTTPS rack.url_scheme].freeze
     FRAME = /\A(?<file>.+?):(?<line>\d+)(?::in [`'](?<method>.*)')?/
@@ -27,34 +30,34 @@ module WatchClient
       request_info = request_info(request, config)
 
       notice = {
-        "exception_class" => exception.class.name.to_s,
-        "message" => truncate(Entry.clean(exception.message.to_s), MAX_MESSAGE_BYTES),
-        "backtrace" => clean_backtrace(exception.backtrace, config),
-        "causes" => causes(exception, config),
-        "occurred_at" => time.utc.iso8601(6),
-        "environment" => config.environment.to_s,
-        "host" => config.host,
-        "app_version" => config.app_version,
-        "request_id" => log_context[:request_id],
-        "component" => component || component_for(request, log_context),
-        "handled" => handled ? true : false,
-        "fingerprint" => fingerprint&.to_s
+        'exception_class' => exception.class.name.to_s,
+        'message' => truncate(Entry.clean(exception.message.to_s), MAX_MESSAGE_BYTES),
+        'backtrace' => clean_backtrace(exception.backtrace, config),
+        'causes' => causes(exception, config),
+        'occurred_at' => time.utc.iso8601(6),
+        'environment' => config.environment.to_s,
+        'host' => config.host,
+        'app_version' => config.app_version,
+        'request_id' => log_context[:request_id],
+        'component' => component || component_for(request, log_context),
+        'handled' => handled ? true : false,
+        'fingerprint' => fingerprint&.to_s
       }
-      notice["user_id"] = Entry.resolve_user_id(config) if log_context[:request_id]
-      notice["request"] = request_info if request_info
-      notice["source"] = source_context(notice["backtrace"], config)
-      notice["breadcrumbs"] = Breadcrumbs.for_exception(exception) if config.breadcrumbs
-      notice["app_env"] = AppEnv.snapshot(config)
-      notice["notifier"] = { "name" => "watch_client", "version" => VERSION, "language" => "ruby" }
+      notice['user_id'] = Entry.resolve_user_id(config) if log_context[:request_id]
+      notice['request'] = request_info if request_info
+      notice['source'] = source_context(notice['backtrace'], config)
+      notice['breadcrumbs'] = Breadcrumbs.for_exception(exception) if config.breadcrumbs
+      notice['app_env'] = AppEnv.snapshot(config)
+      notice['notifier'] = { 'name' => 'watch_client', 'version' => VERSION, 'language' => 'ruby' }
       if request
-        notice["session"] = session_info(request, config) if config.send_session
-        notice["cookies"] = cookies_info(request, config)
-        notice["cgi_env"] = cgi_env(request, config)
+        notice['session'] = session_info(request, config) if config.send_session
+        notice['cookies'] = cookies_info(request, config)
+        notice['cgi_env'] = cgi_env(request, config)
       end
 
       extra = Entry.stringify(log_context.reject { |key, _| %i[request_id].include?(key) })
       extra.merge!(Entry.stringify(context)) if context.is_a?(Hash)
-      notice["context"] = Entry.filter(extra, config.filter_keys) unless extra.empty?
+      notice['context'] = Entry.filter(extra, config.filter_keys) unless extra.empty?
 
       notice.delete_if { |_, value| value.nil? }
     end
@@ -103,7 +106,7 @@ module WatchClient
       prefix = root.empty? ? nil : "#{root.chomp('/')}/"
       Array(backtrace).first(config.backtrace_lines.to_i).map do |line|
         line = line.to_s
-        if prefix && line.start_with?(prefix) && !line.include?("/vendor/") && !line.include?("/gems/")
+        if prefix && line.start_with?(prefix) && !line.include?('/vendor/') && !line.include?('/gems/')
           line.delete_prefix(prefix)
         else
           line
@@ -114,13 +117,13 @@ module WatchClient
     def causes(exception, config)
       list = []
       cause = exception.cause
-      seen = [ exception.object_id ]
+      seen = [exception.object_id]
       while cause && list.size < MAX_CAUSES && !seen.include?(cause.object_id)
         seen << cause.object_id
         list << {
-          "exception_class" => cause.class.name.to_s,
-          "message" => truncate(Entry.clean(cause.message.to_s), MAX_MESSAGE_BYTES),
-          "backtrace" => clean_backtrace(cause.backtrace, config).first(10)
+          'exception_class' => cause.class.name.to_s,
+          'message' => truncate(Entry.clean(cause.message.to_s), MAX_MESSAGE_BYTES),
+          'backtrace' => clean_backtrace(cause.backtrace, config).first(10)
         }
         cause = cause.cause
       end
@@ -137,18 +140,26 @@ module WatchClient
     def request_info(request, config)
       return unless request
 
-      params = Entry.json_safe(request.filtered_parameters) rescue {}
-      params = { "_truncated" => true } if JSON.generate(params).bytesize > MAX_PARAMS_BYTES
+      params = begin
+        Entry.json_safe(request.filtered_parameters)
+      rescue StandardError
+        {}
+      end
+      params = { '_truncated' => true } if JSON.generate(params).bytesize > MAX_PARAMS_BYTES
       path = request.respond_to?(:filtered_path) ? request.filtered_path : request.path
 
       {
-        "method" => request.request_method,
-        "url" => "#{request.base_url}#{path}",
-        "params" => Entry.filter(params, config.filter_keys),
-        "remote_ip" => (request.remote_ip rescue nil),
-        "referrer" => request.get_header("HTTP_REFERER")&.to_s&.[](0, 1000),
-        "user_agent" => request.get_header("HTTP_USER_AGENT")&.to_s&.[](0, 500),
-        "headers" => headers(request, config)
+        'method' => request.request_method,
+        'url' => Filter.url("#{request.base_url}#{path}", config.filter_keys),
+        'params' => Entry.filter(params, config.filter_keys),
+        'remote_ip' => begin
+          request.remote_ip
+        rescue StandardError
+          nil
+        end,
+        'referrer' => Filter.url(request.get_header('HTTP_REFERER')&.to_s, config.filter_keys)&.[](0, 1000),
+        'user_agent' => request.get_header('HTTP_USER_AGENT')&.to_s&.[](0, 500),
+        'headers' => headers(request, config)
       }.compact
     rescue StandardError
       nil
@@ -158,10 +169,10 @@ module WatchClient
     def headers(request, config)
       out = {}
       request.env.each do |key, value|
-        next unless key.start_with?("HTTP_")
+        next unless key.start_with?('HTTP_')
 
-        name = key.delete_prefix("HTTP_").split("_").map(&:capitalize).join("-")
-        out[name] = SECRET_HEADERS.include?(key) ? FILTERED : value.to_s[0, 500]
+        name = key.delete_prefix('HTTP_').split('_').map(&:capitalize).join('-')
+        out[name] = header_value(key, value, config)
       end
       limit(Entry.filter(out, config.filter_keys))
     end
@@ -171,16 +182,28 @@ module WatchClient
       env = request.env
       out = {}
       CGI_KEYS.each { |key| out[key] = env[key].to_s[0, 500] if env.key?(key) }
-      query = request.respond_to?(:filtered_path) ? request.filtered_path.to_s.split("?", 2)[1] : nil
-      out["QUERY_STRING"] = query if query
+      query = request.respond_to?(:filtered_path) ? request.filtered_path.to_s.split('?', 2)[1] : nil
+      out['QUERY_STRING'] = Filter.query_string(query, config.filter_keys) if query
+      %w[REQUEST_URI ORIGINAL_FULLPATH].each do |key|
+        out[key] = Filter.url(env[key].to_s, config.filter_keys)[0, 500] if env.key?(key)
+      end
       env.each do |key, value|
-        next unless key.start_with?("HTTP_")
+        next unless key.start_with?('HTTP_')
 
-        out[key] = SECRET_HEADERS.include?(key) ? FILTERED : value.to_s[0, 500]
+        out[key] = header_value(key, value, config)
       end
       limit(Entry.filter(out, config.filter_keys))
     rescue StandardError
       nil
+    end
+
+    # A header as sent: secrets hidden, URLs (Referer) with secret / personal query values masked.
+    def header_value(key, value, config)
+      return FILTERED if SECRET_HEADERS.include?(key)
+
+      text = value.to_s
+      text = Filter.url(text, config.filter_keys) if URL_HEADERS.include?(key)
+      text[0, 500]
     end
 
     # Session contents with the app's filter_parameters applied (CSRF token always hidden).
@@ -191,7 +214,7 @@ module WatchClient
       return nil if session.respond_to?(:loaded?) && !session.loaded?
 
       data = Entry.json_safe(session.to_hash)
-      keys = Array(config.filter_keys) + [ /csrf/i, /\Asession_id\z/, /\Awarden\./ ]
+      keys = Array(config.filter_keys) + [/csrf/i, /\Asession_id\z/, /\Awarden\./]
       limit(Entry.filter(data, keys))
     rescue StandardError
       nil
@@ -217,7 +240,7 @@ module WatchClient
       out = []
       Array(backtrace).each_with_index do |frame, index|
         break if out.size >= config.source_frames.to_i
-        next if frame.start_with?("/") # not an app frame (gems, Ruby)
+        next if frame.start_with?('/') # not an app frame (gems, Ruby)
 
         match = FRAME.match(frame) or next
         path = File.join(root, match[:file])
@@ -226,10 +249,10 @@ module WatchClient
         next if number < 1 || number > lines.size
 
         radius = config.source_lines.to_i
-        first = [ number - radius, 1 ].max
-        last = [ number + radius, lines.size ].min
-        out << { "index" => index, "file" => match[:file], "line" => number, "method" => match[:method],
-                 "start" => first, "lines" => lines[(first - 1)..(last - 1)].map { |line| line.chomp[0, 300] } }
+        first = [number - radius, 1].max
+        last = [number + radius, lines.size].min
+        out << { 'index' => index, 'file' => match[:file], 'line' => number, 'method' => match[:method],
+                 'start' => first, 'lines' => lines[(first - 1)..(last - 1)].map { |line| line.chomp[0, 300] } }
       end
       out
     rescue StandardError
@@ -239,7 +262,7 @@ module WatchClient
     def read_source(path)
       return nil unless File.file?(path) && File.size(path) < 1_000_000
 
-      File.readlines(path, encoding: "UTF-8").map { |line| line.scrub("?") }
+      File.readlines(path, encoding: 'UTF-8').map { |line| line.scrub('?') }
     rescue StandardError
       nil
     end
@@ -247,9 +270,9 @@ module WatchClient
     def limit(hash)
       return hash if hash.nil? || JSON.generate(hash).bytesize <= MAX_SECTION_BYTES
 
-      { "_truncated" => true }
+      { '_truncated' => true }
     rescue StandardError
-      { "_truncated" => true }
+      { '_truncated' => true }
     end
 
     def component_for(request, log_context)
@@ -261,14 +284,14 @@ module WatchClient
       action = path_params[:action]
       return unless controller
 
-      name = controller.to_s.split("/").map { |part| part.split("_").map(&:capitalize).join }.join("::")
+      name = controller.to_s.split('/').map { |part| part.split('_').map(&:capitalize).join }.join('::')
       "#{name}Controller##{action}"
     rescue StandardError
       nil
     end
 
     def truncate(text, max_bytes)
-      text.bytesize > max_bytes ? text.byteslice(0, max_bytes).scrub("") : text
+      text.bytesize > max_bytes ? text.byteslice(0, max_bytes).scrub('') : text
     end
   end
 end

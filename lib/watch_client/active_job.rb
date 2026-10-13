@@ -1,11 +1,13 @@
-require "time"
+# frozen_string_literal: true
+
+require 'time'
 
 module WatchClient
   # ActiveJob (Solid Queue, Sidekiq, any adapter):
   # - remembers the request ID at enqueue time and stores it with the job,
   # - while the job runs, every log line carries request_id, job_id and job_class.
   module ActiveJobExtension
-    SERIALIZED_KEY = "watch_request_id".freeze
+    SERIALIZED_KEY = 'watch_request_id'
 
     def self.install(base)
       return if base.ancestors.include?(Serialization)
@@ -31,7 +33,7 @@ module WatchClient
             raise
           ensure
             WatchClient::Metrics.record_job(job_class: job.class.name, queue: job.queue_name, failed: failed, wait_ms: wait_ms,
-                                             duration_ms: (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000)
+                                            duration_ms: (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000)
           end
         end
       end
@@ -41,8 +43,8 @@ module WatchClient
     def self.wait_ms(job)
       enqueued = job.respond_to?(:enqueued_at) ? job.enqueued_at : nil
       scheduled = job.respond_to?(:scheduled_at) ? job.scheduled_at : nil
-      from = [ time_of(enqueued), time_of(scheduled) ].compact.max
-      from ? [ (Time.now - from) * 1000, 0 ].max : nil
+      from = [time_of(enqueued), time_of(scheduled)].compact.max
+      from ? [(Time.now - from) * 1000, 0].max : nil
     rescue StandardError
       nil
     end
@@ -58,6 +60,7 @@ module WatchClient
       nil
     end
 
+    # Carries the request ID through job serialization, so the job's logs link to the request.
     module Serialization
       attr_writer :watch_request_id
 

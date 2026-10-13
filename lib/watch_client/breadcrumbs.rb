@@ -1,4 +1,7 @@
-require "time"
+# frozen_string_literal: true
+
+require 'time'
+require 'watch_client/sql_normalizer'
 
 module WatchClient
   # The last few things that happened in the current request or job (SQL queries,
@@ -7,8 +10,6 @@ module WatchClient
     KEY = :watch_client_breadcrumbs
     IVAR = :@__watch_breadcrumbs
     MAX_MESSAGE = 300
-    SQL_STRING = /'(?:[^']|'')*'/
-    SQL_NUMBER = /(?<![\w.$])-?\d+(?:\.\d+)?(?![\w.])/
 
     module_function
 
@@ -29,9 +30,9 @@ module WatchClient
       trail = Thread.current[KEY]
       return unless trail && WatchClient.configuration.breadcrumbs
 
-      crumb = { "at" => Time.now.utc.iso8601(3), "category" => category.to_s,
-                "message" => Entry.clean(message.to_s)[0, MAX_MESSAGE] }
-      crumb["metadata"] = Entry.json_safe(metadata.compact) if metadata && !metadata.empty?
+      crumb = { 'at' => Time.now.utc.iso8601(3), 'category' => category.to_s,
+                'message' => Entry.clean(message.to_s)[0, MAX_MESSAGE] }
+      crumb['metadata'] = Entry.json_safe(metadata.compact) if metadata && !metadata.empty?
       trail << crumb
       trail.shift while trail.size > WatchClient.configuration.breadcrumbs_max.to_i
       true
@@ -58,9 +59,13 @@ module WatchClient
       saved || current
     end
 
-    # Replaces literal values in SQL with ? so no personal data ends up in a breadcrumb.
+    # Replaces literal values in SQL with ? so no personal data ends up in a breadcrumb. Same
+    # SQL-aware sanitizer as slow / top queries (strings with any escaping, dollar quotes,
+    # comments, numbers, bind parameters).
     def sanitize_sql(sql)
-      sql.to_s.gsub(SQL_STRING, "?").gsub(SQL_NUMBER, "?").squeeze(" ")
+      SqlNormalizer.normalize(sql)
+    rescue StandardError
+      '[SQL]'
     end
 
     # Rails instrumentation → breadcrumbs. Called once by the Railtie.
@@ -68,32 +73,32 @@ module WatchClient
       return if @subscribed
 
       @subscribed = true
-      on("start_processing.action_controller") do |payload, _event|
-        path = payload[:path].to_s.split("?").first
-        add("request", "#{payload[:controller]}##{payload[:action]}",
-            "method" => payload[:method], "path" => path, "format" => payload[:format]&.to_s)
+      on('start_processing.action_controller') do |payload, _event|
+        path = payload[:path].to_s.split('?').first
+        add('request', "#{payload[:controller]}##{payload[:action]}",
+            'method' => payload[:method], 'path' => path, 'format' => payload[:format]&.to_s)
       end
-      on("sql.active_record") do |payload, duration|
-        next if payload[:name].to_s == "SCHEMA" || payload[:name].to_s.start_with?("EXPLAIN")
+      on('sql.active_record') do |payload, duration|
+        next if payload[:name].to_s == 'SCHEMA' || payload[:name].to_s.start_with?('EXPLAIN')
 
-        add("query", sanitize_sql(payload[:sql]),
-            "name" => payload[:name], "duration_ms" => duration, "cached" => (payload[:cached] ? true : nil))
+        add('query', sanitize_sql(payload[:sql]),
+            'name' => payload[:name], 'duration_ms' => duration, 'cached' => (payload[:cached] ? true : nil))
       end
       %w[render_template.action_view render_partial.action_view render_collection.action_view].each do |name|
         on(name) do |payload, duration|
-          add("render", relative(payload[:identifier]), "duration_ms" => duration)
+          add('render', relative(payload[:identifier]), 'duration_ms' => duration)
         end
       end
-      on("enqueue.active_job") do |payload, _event|
+      on('enqueue.active_job') do |payload, _event|
         job = payload[:job]
-        add("job", "Enqueued #{job.class.name}", "queue" => job.respond_to?(:queue_name) ? job.queue_name : nil,
-                                                  "job_id" => job.respond_to?(:job_id) ? job.job_id : nil)
+        add('job', "Enqueued #{job.class.name}", 'queue' => job.respond_to?(:queue_name) ? job.queue_name : nil,
+                                                 'job_id' => job.respond_to?(:job_id) ? job.job_id : nil)
       end
-      on("deliver.action_mailer") do |payload, _event|
-        add("mail", "Sent mail from #{payload[:mailer]}", "subject" => payload[:subject])
+      on('deliver.action_mailer') do |payload, _event|
+        add('mail', "Sent mail from #{payload[:mailer]}", 'subject' => payload[:subject])
       end
-      on("cache_read.active_support") do |payload, _event|
-        add("cache", "Cache #{payload[:hit] ? 'hit' : 'miss'}", "key" => payload[:key].to_s[0, 120])
+      on('cache_read.active_support') do |payload, _event|
+        add('cache', "Cache #{payload[:hit] ? 'hit' : 'miss'}", 'key' => payload[:key].to_s[0, 120])
       end
     end
 

@@ -1,4 +1,7 @@
-require "time"
+# frozen_string_literal: true
+
+require 'time'
+require 'uri'
 
 module WatchClient
   # Builds the JSON-ready hash Watch expects for one log line.
@@ -6,7 +9,7 @@ module WatchClient
     LEVEL_NAMES = %w[debug info warn error fatal unknown].freeze
     MAX_MESSAGE_BYTES = 32 * 1024
     ANSI_COLOR = /\e\[[\d;]*m/
-    FILTERED = "[FILTERED]".freeze
+    FILTERED = '[FILTERED]'
     # Fields Watch stores in columns; everything else ends up in its payload.
     RESERVED = %w[timestamp level message environment host request_id user_id job_id].freeze
 
@@ -16,23 +19,25 @@ module WatchClient
     # message:  String, Hash (structured log) or Exception
     def build(config, severity:, message:, time: Time.now, payload: nil, context: Context.current)
       level = level_name(severity)
-      text, structured = split_message(message)
+      # Fields are filtered before anything is built from them (also the fallback message text).
+      text, structured = split_message(message, config.filter_keys)
       fields = {}
-      fields.merge!(stringify(structured)) if structured
+      fields.merge!(structured) if structured
       fields.merge!(stringify(payload)) if payload
       fields = filter(fields, config.filter_keys) unless fields.empty?
 
       entry = {
-        "timestamp" => time.utc.iso8601(6),
-        "level" => level,
-        "message" => clean(text),
-        "environment" => config.environment.to_s,
-        "host" => config.host
+        'timestamp' => time.utc.iso8601(6),
+        'level' => level,
+        'message' => clean(text),
+        'environment' => config.environment.to_s,
+        'host' => config.host
       }
-      entry["app_version"] = config.app_version if config.app_version
+      entry['app_version'] = config.app_version if config.app_version
 
-      context.each { |key, value| entry[key.to_s] = scalar(value) }
-      entry["user_id"] ||= resolve_user_id(config) if context.key?(:request_id)
+      # with_context fields go through the same filter (an api_key in the context is masked).
+      filter(stringify(context), config.filter_keys).each { |key, value| entry[key] = scalar(value) }
+      entry['user_id'] ||= resolve_user_id(config) if context.key?(:request_id)
 
       fields.each do |key, value|
         # Structured fields never overwrite the core columns.
@@ -43,10 +48,10 @@ module WatchClient
 
     def level_name(severity)
       case severity
-      when Integer then LEVEL_NAMES[severity] || "unknown"
+      when Integer then LEVEL_NAMES[severity] || 'unknown'
       else
         name = severity.to_s.downcase
-        LEVEL_NAMES.include?(name) ? name : "info"
+        LEVEL_NAMES.include?(name) ? name : 'info'
       end
     end
 
@@ -54,26 +59,29 @@ module WatchClient
       LEVEL_NAMES.index(level_name(severity))
     end
 
-    # Returns [text, structured_hash_or_nil].
-    def split_message(message)
+    # Returns [text, structured_hash_or_nil]. A hash is filtered first, so a text made from its
+    # fields ("password=[FILTERED]") never shows a secret.
+    def split_message(message, keys = nil)
       case message
       when Hash
-        hash = stringify(message)
-        text = hash.delete("message") || hash.delete("msg") || hash["event"] || hash.map { |k, v| "#{k}=#{v}" }.join(" ")
-        [ text.to_s, hash ]
+        hash = filter(stringify(message), keys)
+        text = hash.delete('message') || hash.delete('msg') || hash['event'] || hash.map do |k, v|
+          "#{k}=#{v}"
+        end.join(' ')
+        [text.to_s, hash]
       when Exception
-        [ "#{message.class}: #{message.message}", { "exception_class" => message.class.name } ]
+        ["#{message.class}: #{message.message}", { 'exception_class' => message.class.name }]
       when nil
-        [ "", nil ]
+        ['', nil]
       else
-        [ message.to_s, nil ]
+        [message.to_s, nil]
       end
     end
 
     def clean(text)
       text = text.dup.force_encoding(Encoding::UTF_8) unless text.encoding == Encoding::UTF_8
-      text = text.scrub("?").gsub(ANSI_COLOR, "").strip
-      text.bytesize > MAX_MESSAGE_BYTES ? text.byteslice(0, MAX_MESSAGE_BYTES).scrub("") : text
+      text = text.scrub('?').gsub(ANSI_COLOR, '').strip
+      text.bytesize > MAX_MESSAGE_BYTES ? text.byteslice(0, MAX_MESSAGE_BYTES).scrub('') : text
     end
 
     def stringify(hash)
@@ -83,7 +91,7 @@ module WatchClient
     def json_safe(value)
       case value
       when nil, true, false, Integer, Float then value
-      when String then value.dup.force_encoding(Encoding::UTF_8).scrub("?")
+      when String then value.dup.force_encoding(Encoding::UTF_8).scrub('?')
       when Symbol then value.to_s
       when Hash then stringify(value)
       when Array then value.map { |item| json_safe(item) }
@@ -96,29 +104,9 @@ module WatchClient
       value.is_a?(String) || value.is_a?(Numeric) || value == true || value == false ? value : value.to_s
     end
 
-    # Masks values whose key matches a filter (Strings match as substrings, like Rails).
+    # Masks values whose key matches a filter rule, at every level (see Filter).
     def filter(hash, keys)
-      return hash if keys.nil? || keys.empty?
-
-      hash.each_with_object({}) do |(key, value), out|
-        out[key] =
-          if filtered_key?(key, keys) then FILTERED
-          elsif value.is_a?(Hash) then filter(value, keys)
-          elsif value.is_a?(Array) then value.map { |item| item.is_a?(Hash) ? filter(item, keys) : item }
-          else value
-          end
-      end
-    end
-
-    def filtered_key?(key, keys)
-      name = key.to_s.downcase
-      keys.any? do |filter|
-        case filter
-        when Regexp then filter.match?(key.to_s)
-        when Proc then false
-        else name.include?(filter.to_s.downcase)
-        end
-      end
+      Filter.hash(hash, keys)
     end
 
     # Calls the app's current_user_id lambda, never twice at once on a thread

@@ -1,6 +1,8 @@
-require "time"
-require "watch_client/sql_normalizer"
-require "watch_client/context"
+# frozen_string_literal: true
+
+require 'time'
+require 'watch_client/sql_normalizer'
+require 'watch_client/context'
 
 module WatchClient
   # Collects queries slower than `slow_query_ms` (from ActiveSupport's
@@ -8,7 +10,7 @@ module WatchClient
   # monitor takes them (once a minute). Cheap for fast queries: one comparison.
   class SlowQueries
     MAX_GROUPS = 200
-    GEM_LIB = File.expand_path("..", __dir__)
+    GEM_LIB = File.expand_path('..', __dir__)
 
     def initialize(config)
       @config = config
@@ -20,7 +22,7 @@ module WatchClient
     # Called for every SQL event; only slow ones do any work.
     def record(sql:, duration_ms:, name: nil, cached: false, at: Time.now)
       return false if duration_ms < @config.slow_query_ms.to_f
-      return false if cached || name.to_s == "SCHEMA" || name.to_s == "CACHE"
+      return false if cached || name.to_s == 'SCHEMA' || name.to_s == 'CACHE'
       return false if Thread.current[:watch_client_internal]
       return false if SqlNormalizer.transaction_statement?(sql)
 
@@ -34,16 +36,16 @@ module WatchClient
             @dropped += 1
             return false
           end
-          group = @groups[key] = { "fingerprint" => key, "sql" => normalized, "name" => name.to_s[0, 100],
-                                   "count" => 0, "total_ms" => 0.0, "max_ms" => 0.0,
-                                   "location" => app_location, "first_at" => at.utc.iso8601(3) }
+          group = @groups[key] = { 'fingerprint' => key, 'sql' => normalized, 'name' => name.to_s[0, 100],
+                                   'count' => 0, 'total_ms' => 0.0, 'max_ms' => 0.0,
+                                   'location' => app_location, 'first_at' => at.utc.iso8601(3) }
         end
-        group["count"] += 1
-        group["total_ms"] += duration_ms
-        group["last_at"] = at.utc.iso8601(3)
-        if duration_ms >= group["max_ms"]
-          group["max_ms"] = duration_ms
-          group["request_id"] = request_id
+        group['count'] += 1
+        group['total_ms'] += duration_ms
+        group['last_at'] = at.utc.iso8601(3)
+        if duration_ms >= group['max_ms']
+          group['max_ms'] = duration_ms
+          group['request_id'] = request_id
         end
       end
       true
@@ -59,8 +61,8 @@ module WatchClient
         taken
       end
       groups.filter_map do |group|
-        group["total_ms"] = group["total_ms"].round(1)
-        group["max_ms"] = group["max_ms"].round(1)
+        group['total_ms'] = group['total_ms'].round(1)
+        group['max_ms'] = group['max_ms'].round(1)
         group.compact!
         @config.before_send_query ? @config.before_send_query.call(group) : group
       end
@@ -84,8 +86,8 @@ module WatchClient
         next unless path&.start_with?(root)
         next if path.start_with?(GEM_LIB)
 
-        relative = path.delete_prefix(root).delete_prefix("/")
-        next if relative.start_with?("vendor/", "bin/", "config/initializers/watch_client")
+        relative = path.delete_prefix(root).delete_prefix('/')
+        next if relative.start_with?('vendor/', 'bin/', 'config/initializers/watch_client')
 
         return "#{relative}:#{location.lineno}:in '#{location.label}'"
       end

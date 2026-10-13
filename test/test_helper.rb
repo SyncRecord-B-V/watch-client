@@ -1,33 +1,35 @@
-$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
-require "minitest/autorun"
-require "socket"
-require "json"
-require "zlib"
-require "stringio"
-require "watch_client"
+# frozen_string_literal: true
+
+$LOAD_PATH.unshift File.expand_path('../lib', __dir__)
+require 'minitest/autorun'
+require 'socket'
+require 'json'
+require 'zlib'
+require 'stringio'
+require 'watch_client'
 
 # A tiny HTTP/1.1 server on 127.0.0.1 that records requests and answers with
 # queued status codes (default 202). Supports keep-alive like Log Hub.
 class FakeHub
-  Request = Struct.new(:method, :path, :headers, :body, keyword_init: true) do
+  Request = Struct.new(:method, :path, :headers, :body, keyword_init: true) do # rubocop:disable Lint/StructNewOverride
     def json
-      raw = headers["content-encoding"] == "gzip" ? Zlib.gunzip(body) : body
+      raw = headers['content-encoding'] == 'gzip' ? Zlib.gunzip(body) : body
       JSON.parse(raw)
     end
 
     def entries
-      json.fetch("entries", [])
+      json.fetch('entries', [])
     end
 
     def errors
-      json.fetch("errors", [])
+      json.fetch('errors', [])
     end
   end
 
   attr_reader :requests
 
   def initialize
-    @server = TCPServer.new("127.0.0.1", 0)
+    @server = TCPServer.new('127.0.0.1', 0)
     @requests = Queue.new
     @statuses = Queue.new
     @threads = []
@@ -76,13 +78,13 @@ class FakeHub
   def serve(socket)
     loop do
       line = socket.gets or break
-      method, path, = line.split(" ")
+      method, path, = line.split(' ')
       headers = {}
       while (header = socket.gets) && header != "\r\n"
-        name, value = header.split(":", 2)
+        name, value = header.split(':', 2)
         headers[name.strip.downcase] = value.to_s.strip
       end
-      body = socket.read(headers["content-length"].to_i)
+      body = socket.read(headers['content-length'].to_i)
       @requests << Request.new(method: method, path: path, headers: headers, body: body)
 
       code = begin
@@ -96,7 +98,11 @@ class FakeHub
   rescue IOError, SystemCallError
     nil
   ensure
-    socket.close rescue nil
+    begin
+      socket.close
+    rescue StandardError
+      nil
+    end
   end
 end
 
@@ -105,11 +111,11 @@ module WatchTestHelpers
     WatchClient.reset!
     WatchClient.configure do |c|
       c.url = hub.url
-      c.api_key = "lh_test_key"
-      c.app_name = "test-app"
-      c.environment = "production"
-      c.host = "web-1"
-      c.app_version = "abc123"
+      c.api_key = 'lh_test_key'
+      c.app_name = 'test-app'
+      c.environment = 'production'
+      c.host = 'web-1'
+      c.app_version = 'abc123'
       c.flush_interval = 0.05
       c.timeout = 2
       c.diagnostics = StringIO.new

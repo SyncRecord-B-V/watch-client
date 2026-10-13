@@ -1,5 +1,7 @@
-require "time"
-require "watch_client/sql_normalizer"
+# frozen_string_literal: true
+
+require 'time'
+require 'watch_client/sql_normalizer'
 
 module WatchClient
   # Reads PostgreSQL's own statistics over one of the app's pooled connections:
@@ -13,7 +15,7 @@ module WatchClient
     TOP_QUERIES = 20
     TABLES = 30
 
-    HEALTH_SQL = <<~SQL.freeze
+    HEALTH_SQL = <<~SQL
       SELECT
         current_setting('max_connections')::int AS max_connections,
         count(*) FILTER (WHERE backend_type = 'client backend') AS connections,
@@ -29,14 +31,14 @@ module WatchClient
       FROM pg_stat_activity
     SQL
 
-    LONGEST_QUERY_SQL = <<~SQL.freeze
+    LONGEST_QUERY_SQL = <<~SQL
       SELECT query FROM pg_stat_activity
       WHERE datname = current_database() AND state = 'active' AND backend_type = 'client backend'
         AND pid <> pg_backend_pid() AND query_start < now() - interval '1 second'
       ORDER BY query_start LIMIT 1
     SQL
 
-    COUNTERS_SQL = <<~SQL.freeze
+    COUNTERS_SQL = <<~SQL
       SELECT xact_commit, xact_rollback, blks_hit, blks_read, deadlocks, temp_bytes,
              pg_database_size(current_database()) AS size_bytes,
              CASE WHEN pg_is_in_recovery() THEN extract(epoch FROM now() - pg_last_xact_replay_timestamp()) END AS replica_lag_s
@@ -83,8 +85,8 @@ module WatchClient
     # Rails connection pool numbers for this process.
     def pool_stats
       stat = @pool.stat
-      { "size" => stat[:size], "connections" => stat[:connections], "busy" => stat[:busy], "idle" => stat[:idle],
-        "waiting" => stat[:waiting], "dead" => stat[:dead] }.compact
+      { 'size' => stat[:size], 'connections' => stat[:connections], 'busy' => stat[:busy], 'idle' => stat[:idle],
+        'waiting' => stat[:waiting], 'dead' => stat[:dead] }.compact
     rescue StandardError
       nil
     end
@@ -107,20 +109,24 @@ module WatchClient
       return nil unless postgresql? && pool_free?
 
       activity, counters, longest = read_only do |connection|
-        [ select_one(connection, HEALTH_SQL), select_one(connection, COUNTERS_SQL), select_one(connection, LONGEST_QUERY_SQL) ]
+        [select_one(connection, HEALTH_SQL), select_one(connection, COUNTERS_SQL),
+         select_one(connection, LONGEST_QUERY_SQL)]
       end
       return nil unless activity && counters
 
       result = {
-        "max_connections" => int(activity["max_connections"]), "connections" => int(activity["connections"]),
-        "database_connections" => int(activity["database_connections"]), "active" => int(activity["active"]),
-        "idle" => int(activity["idle"]), "idle_in_transaction" => int(activity["idle_in_transaction"]),
-        "waiting_on_locks" => int(activity["waiting_on_locks"]),
-        "longest_query_s" => float(activity["longest_query_s"])&.round(1),
-        "longest_idle_transaction_s" => float(activity["longest_idle_transaction_s"])&.round(1),
-        "size_bytes" => int(counters["size_bytes"]), "replica_lag_s" => float(counters["replica_lag_s"])&.round(1)
+        'max_connections' => int(activity['max_connections']), 'connections' => int(activity['connections']),
+        'database_connections' => int(activity['database_connections']), 'active' => int(activity['active']),
+        'idle' => int(activity['idle']), 'idle_in_transaction' => int(activity['idle_in_transaction']),
+        'waiting_on_locks' => int(activity['waiting_on_locks']),
+        'longest_query_s' => float(activity['longest_query_s'])&.round(1),
+        'longest_idle_transaction_s' => float(activity['longest_idle_transaction_s'])&.round(1),
+        'size_bytes' => int(counters['size_bytes']), 'replica_lag_s' => float(counters['replica_lag_s'])&.round(1)
       }
-      result["longest_query"] = SqlNormalizer.normalize(longest["query"])[0, 500] if longest && result["longest_query_s"].to_f >= 1
+      if longest && result['longest_query_s'].to_f >= 1
+        result['longest_query'] =
+          SqlNormalizer.normalize(longest['query'])[0, 500]
+      end
       result.merge!(rates(counters, now))
       result.compact
     end
@@ -131,21 +137,29 @@ module WatchClient
 
       read_only do |connection|
         installed = select_one(connection, "SELECT 1 AS ok FROM pg_extension WHERE extname = 'pg_stat_statements'")
-        next { "available" => false, "reason" => "The pg_stat_statements extension is not installed in this database." } unless installed
+        unless installed
+          next { 'available' => false,
+                 'reason' => 'The pg_stat_statements extension is not installed in this database.' }
+        end
 
         # PostgreSQL 13+ calls the columns total_exec_time / mean_exec_time; 12 and older total_time / mean_time.
-        modern = select_one(connection, "SELECT 1 AS ok FROM information_schema.columns " \
+        modern = select_one(connection, 'SELECT 1 AS ok FROM information_schema.columns ' \
                                         "WHERE table_name = 'pg_stat_statements' AND column_name = 'total_exec_time'")
-        columns = modern ? { total: "total_exec_time", mean: "mean_exec_time" } : { total: "total_time", mean: "mean_time" }
+        columns = if modern
+                    { total: 'total_exec_time',
+                      mean: 'mean_exec_time' }
+                  else
+                    { total: 'total_time', mean: 'mean_time' }
+                  end
         rows = select_all(connection, format(TOP_QUERIES_SQL, **columns))
         queries = rows.map do |row|
-          { "queryid" => row["queryid"].to_s, "sql" => SqlNormalizer.normalize(row["query"]), "calls" => int(row["calls"]),
-            "total_ms" => float(row["total_ms"])&.round(1), "mean_ms" => float(row["mean_ms"])&.round(2), "rows" => int(row["rows"]) }
+          { 'queryid' => row['queryid'].to_s, 'sql' => SqlNormalizer.normalize(row['query']), 'calls' => int(row['calls']),
+            'total_ms' => float(row['total_ms'])&.round(1), 'mean_ms' => float(row['mean_ms'])&.round(2), 'rows' => int(row['rows']) }
         end
-        { "available" => true, "queries" => queries }
+        { 'available' => true, 'queries' => queries }
       end
     rescue StandardError => e
-      { "available" => false, "reason" => e.message.lines.first.to_s.strip[0, 300] }
+      { 'available' => false, 'reason' => e.message.lines.first.to_s.strip[0, 300] }
     end
 
     def tables
@@ -153,17 +167,17 @@ module WatchClient
 
       read_only do |connection|
         tables = select_all(connection, TABLES_SQL).map do |row|
-          { "schema" => row["schema"], "name" => row["name"], "total_bytes" => int(row["total_bytes"]),
-            "table_bytes" => int(row["table_bytes"]), "index_bytes" => int(row["index_bytes"]),
-            "live_rows" => int(row["live_rows"]), "dead_rows" => int(row["dead_rows"]), "seq_scan" => int(row["seq_scan"]),
-            "idx_scan" => int(row["idx_scan"]), "last_vacuum_at" => time(row["last_vacuum_at"]),
-            "last_analyze_at" => time(row["last_analyze_at"]) }.compact
+          { 'schema' => row['schema'], 'name' => row['name'], 'total_bytes' => int(row['total_bytes']),
+            'table_bytes' => int(row['table_bytes']), 'index_bytes' => int(row['index_bytes']),
+            'live_rows' => int(row['live_rows']), 'dead_rows' => int(row['dead_rows']), 'seq_scan' => int(row['seq_scan']),
+            'idx_scan' => int(row['idx_scan']), 'last_vacuum_at' => time(row['last_vacuum_at']),
+            'last_analyze_at' => time(row['last_analyze_at']) }.compact
         end
         unused = select_all(connection, UNUSED_INDEXES_SQL).map do |row|
-          { "schema" => row["schema"], "table" => row["table"], "name" => row["name"], "bytes" => int(row["bytes"]),
-            "scans" => int(row["scans"]) }
+          { 'schema' => row['schema'], 'table' => row['table'], 'name' => row['name'], 'bytes' => int(row['bytes']),
+            'scans' => int(row['scans']) }
         end
-        { "tables" => tables, "unused_indexes" => unused }
+        { 'tables' => tables, 'unused_indexes' => unused }
       end
     end
 
@@ -171,9 +185,9 @@ module WatchClient
 
     # Per-second rates and ratios since the previous sample of this process.
     def rates(counters, now)
-      current = { at: now.to_f, commits: int(counters["xact_commit"]), rollbacks: int(counters["xact_rollback"]),
-                  hits: int(counters["blks_hit"]), reads: int(counters["blks_read"]),
-                  deadlocks: int(counters["deadlocks"]), temp_bytes: int(counters["temp_bytes"]) }
+      current = { at: now.to_f, commits: int(counters['xact_commit']), rollbacks: int(counters['xact_rollback']),
+                  hits: int(counters['blks_hit']), reads: int(counters['blks_read']),
+                  deadlocks: int(counters['deadlocks']), temp_bytes: int(counters['temp_bytes']) }
       previous = @previous
       @previous = current
       return {} unless previous
@@ -184,9 +198,9 @@ module WatchClient
       return {} if elapsed <= 0 || %i[commits rollbacks hits reads deadlocks].any? { |key| delta.call(key).negative? }
 
       blocks = delta.call(:hits) + delta.call(:reads)
-      { "commits_per_s" => (delta.call(:commits) / elapsed).round(2), "rollbacks_per_s" => (delta.call(:rollbacks) / elapsed).round(2),
-        "cache_hit_ratio" => blocks.positive? ? (delta.call(:hits).to_f / blocks).round(4) : nil,
-        "deadlocks" => delta.call(:deadlocks), "temp_bytes" => [ delta.call(:temp_bytes), 0 ].max }
+      { 'commits_per_s' => (delta.call(:commits) / elapsed).round(2), 'rollbacks_per_s' => (delta.call(:rollbacks) / elapsed).round(2),
+        'cache_hit_ratio' => blocks.positive? ? (delta.call(:hits).to_f / blocks).round(4) : nil,
+        'deadlocks' => delta.call(:deadlocks), 'temp_bytes' => [delta.call(:temp_bytes), 0].max }
     end
 
     # One short read-only transaction with a statement timeout; our own queries are
@@ -204,7 +218,7 @@ module WatchClient
     end
 
     def select_all(connection, sql)
-      connection.select_all(sql, "WatchClient").to_a
+      connection.select_all(sql, 'WatchClient').to_a
     end
 
     def select_one(connection, sql)
@@ -212,11 +226,11 @@ module WatchClient
     end
 
     def int(value)
-      value.nil? ? nil : value.to_i
+      value&.to_i
     end
 
     def float(value)
-      value.nil? ? nil : value.to_f
+      value&.to_f
     end
 
     def time(value)

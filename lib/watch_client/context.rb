@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module WatchClient
   # Per-request / per-job context (request_id, job_id, custom fields), stored
   # fiber-locally so concurrent requests never mix their fields.

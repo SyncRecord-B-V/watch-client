@@ -1,0 +1,21 @@
+# RuboCop for the watch_client gem. Run: bundle exec rubocop
+AllCops:
+  NewCops: disable
+  SuggestExtensions: false
+  Exclude:
+    - "tmp/**/*"
+    - "vendor/**/*"
+
+# The gem keeps hot paths (logger, Net::HTTP patch, SQL scanner, notice builder) in one
+# readable method each, with rescue around them; splitting them only to hit a line count
+# would spread the never-raise / never-block logic over many small methods. Same choice as
+# the hub (rubocop-rails-omakase turns the Metrics cops off).
+Metrics:
+  Enabled: false
+
+Layout/LineLength:
+  Max: 140
+
+# s (StringScanner) and ms (milliseconds) are clear in context.
+Naming/MethodParameterName:
+  AllowedNames: [s, ms, at, id, io, ok]

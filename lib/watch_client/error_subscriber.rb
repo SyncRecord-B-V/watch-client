@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module WatchClient
   # Receives everything reported through Rails' error reporter (Rails.error):
   # unhandled errors in jobs and in the Rails executor, plus anything the app reports
@@ -7,12 +9,12 @@ module WatchClient
       return if handled && !WatchClient.configuration.report_handled_errors
 
       extra = {}
-      extra["severity"] = severity.to_s if severity
-      extra["source"] = source.to_s if source
-      (context || {}).each { |key, value| extra[key.to_s] = simple(value) unless key.to_s == "job" }
+      extra['severity'] = severity.to_s if severity
+      extra['source'] = source.to_s if source
+      (context || {}).each { |key, value| extra[key.to_s] = simple(value) unless key.to_s == 'job' }
       if (job = context && context[:job]).respond_to?(:job_id)
-        extra["job_id"] = job.job_id
-        extra["queue"] = job.queue_name
+        extra['job_id'] = job.job_id
+        extra['queue'] = job.queue_name
       end
 
       component = job.class.name if job.respond_to?(:job_id)
@@ -27,7 +29,7 @@ module WatchClient
     def simple(value)
       case value
       when nil, true, false, Numeric, String, Symbol then value
-      when Hash then value.to_h { |k, v| [ k.to_s, simple(v) ] }
+      when Hash then value.to_h { |k, v| [k.to_s, simple(v)] }
       when Array then value.first(20).map { |item| simple(item) }
       else value.to_s[0, 200]
       end
