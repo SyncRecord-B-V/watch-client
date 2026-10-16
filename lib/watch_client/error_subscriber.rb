@@ -12,12 +12,17 @@ module WatchClient
       extra['severity'] = severity.to_s if severity
       extra['source'] = source.to_s if source
       (context || {}).each { |key, value| extra[key.to_s] = simple(value) unless key.to_s == 'job' }
-      if (job = context && context[:job]).respond_to?(:job_id)
+
+      # The job is taken from our own context first (set around each perform and restored after it,
+      # also kept on the exception). Rails' context[:job] is not restored after a nested
+      # perform_now (e.g. SolidCable::TrimJob running inside another job), so an error in the
+      # outer job would be blamed on the inner one.
+      component = nil
+      if !Notice.context_for(error)[:job_class] && (job = context && context[:job]).respond_to?(:job_id)
         extra['job_id'] = job.job_id
         extra['queue'] = job.queue_name
+        component = job.class.name
       end
-
-      component = job.class.name if job.respond_to?(:job_id)
       WatchClient.notify(error, handled: handled, context: extra, component: component)
     rescue StandardError
       nil

@@ -2,6 +2,7 @@
 
 require 'time'
 require 'watch_client/histogram'
+require 'watch_client/api_quota'
 require 'watch_client/process_stats'
 require 'watch_client/job_queues'
 
@@ -12,14 +13,18 @@ module WatchClient
   #   requests: per controller action: count, 5xx errors, total / slowest time,
   #             time in the database, views and outgoing HTTP, response-time histogram
   #   http:     per outside host the app calls: count, 5xx / 4xx, failures (timeouts,
-  #             connection errors), total / slowest time, histogram
-  #   jobs:     per job class: runs, failures, total / slowest time, histogram, time waited in the queue
+  #             connection errors), total / slowest time, histogram, answers 429 (rate limited)
+  #             and the API's quota from its headers (ApiQuota: latest limit / remaining / reset)
+  #   jobs:     per job class: runs, failures, total / slowest time, histogram, time waited in the queue,
+  #             time in SQL (and number of queries) and in outgoing HTTP calls (JobTimer)
+  #   job_http: outgoing calls per job class and host: count, failures, 429s, total time (which job uses an API)
   #   queues:   queue sizes and oldest job's wait, failed / retrying / dead / scheduled (job backend)
   #   process:  memory, garbage collection, threads, Puma busy threads and backlog
   class Metrics
     MAX_ENDPOINTS = 300
     MAX_HOSTS = 100
     MAX_JOB_CLASSES = 200
+    MAX_JOB_HOSTS = 500
     MIN_INTERVAL = 15
 
     class << self
@@ -55,6 +60,7 @@ module WatchClient
       @requests = {}
       @http = {}
       @jobs = {}
+      @job_http = {}
       @process = ProcessStats.new
       @thread = nil
       @pid = nil
@@ -81,21 +87,25 @@ module WatchClient
     end
 
     # failure: "timeout" or "connection" when the call raised instead of answering.
-    def record_http(host:, duration_ms:, status: nil, failure: nil)
+    # quotas: ApiQuota.parse of the answer's headers (the latest one per name is kept).
+    def record_http(host:, duration_ms:, status: nil, failure: nil, quotas: nil)
       return if host.to_s.empty?
 
       @mutex.synchronize do
         row = @http[host] ||= begin
           return if @http.size >= MAX_HOSTS
 
-          new_row.merge('client_errors' => 0, 'timeouts' => 0, 'failures' => 0)
+          new_row.merge('client_errors' => 0, 'timeouts' => 0, 'failures' => 0, 'rate_limited' => 0, 'quotas' => {})
         end
         add(row, duration_ms)
         code = status.to_i
         row['errors'] += 1 if code >= 500 || failure
         row['client_errors'] += 1 if code.between?(400, 499)
+        row['rate_limited'] += 1 if code == 429
         row['failures'] += 1 if failure
         row['timeouts'] += 1 if failure == 'timeout'
+        Array(quotas).each { |quota| row['quotas'][quota['name']] = quota }
+        record_job_http(host, duration_ms, code, failure)
       end
       ensure_running
     rescue StandardError
@@ -103,17 +113,21 @@ module WatchClient
     end
 
     # wait_ms: time between enqueue (or the scheduled time) and the start of the run.
-    def record_job(job_class:, duration_ms:, queue: nil, failed: false, wait_ms: nil)
+    # db_ms / queries / http_ms: where the run's time went (JobTimer).
+    def record_job(job_class:, duration_ms:, queue: nil, failed: false, wait_ms: nil, db_ms: nil, queries: nil, http_ms: nil)
       return if job_class.to_s.empty?
 
       @mutex.synchronize do
         row = @jobs[job_class] ||= begin
           return if @jobs.size >= MAX_JOB_CLASSES
 
-          new_row.merge('queue' => queue.to_s, 'wait_ms' => 0.0, 'wait_max_ms' => 0.0)
+          new_row.merge('queue' => queue.to_s, 'wait_ms' => 0.0, 'wait_max_ms' => 0.0, 'db_ms' => 0.0, 'http_ms' => 0.0, 'queries' => 0)
         end
         add(row, duration_ms)
         row['errors'] += 1 if failed
+        row['db_ms'] += db_ms.to_f
+        row['http_ms'] += http_ms.to_f
+        row['queries'] += queries.to_i
         if wait_ms
           wait = [wait_ms.to_f, 0].max
           row['wait_ms'] += wait
@@ -127,19 +141,21 @@ module WatchClient
 
     # The minute's numbers, emptying the buffers. Public for tests.
     def build_payload(now: Time.now)
-      requests, http, jobs = @mutex.synchronize do
-        taken = [@requests, @http, @jobs]
+      requests, http, jobs, job_http = @mutex.synchronize do
+        taken = [@requests, @http, @jobs, @job_http]
         @requests = {}
         @http = {}
         @jobs = {}
+        @job_http = {}
         taken
       end
       {
         'sampled_at' => now.utc.iso8601, 'host' => @config.host.to_s, 'pid' => Process.pid,
         'environment' => @config.environment.to_s, 'version' => @config.app_version,
         'requests' => requests.map { |name, row| finish(row).merge('endpoint' => name) },
-        'http' => http.map { |name, row| finish(row).merge('host' => name) },
+        'http' => http.map { |name, row| finish(row).merge('host' => name, 'quotas' => row['quotas'].values) },
         'jobs' => jobs.map { |name, row| finish(row).merge('job_class' => name) },
+        'job_http' => job_http.map { |(job_class, host), row| finish(row).merge('job_class' => job_class, 'host' => host) },
         'queues' => (@config.job_queue_monitoring ? JobQueues.sample : nil),
         'process' => (@config.process_monitoring ? @process.sample : nil)
       }.compact
@@ -147,7 +163,7 @@ module WatchClient
 
     def send_once(now: Time.now)
       payload = build_payload(now: now)
-      return true if %w[requests http jobs].all? do |key|
+      return true if %w[requests http jobs job_http].all? do |key|
         payload[key].empty?
       end && !payload['process'] && !payload['queues']
 
@@ -178,6 +194,22 @@ module WatchClient
     end
 
     private
+
+    # Called with the mutex held, for a call made while a job runs (its class is in the log context).
+    def record_job_http(host, duration_ms, code, failure)
+      job_class = Context.current[:job_class]
+      return if job_class.nil? || job_class.to_s.empty?
+
+      row = @job_http[[job_class.to_s, host]] ||= begin
+        return if @job_http.size >= MAX_JOB_HOSTS
+
+        { 'count' => 0, 'errors' => 0, 'rate_limited' => 0, 'total_ms' => 0.0 }
+      end
+      row['count'] += 1
+      row['errors'] += 1 if code >= 500 || failure
+      row['rate_limited'] += 1 if code == 429
+      row['total_ms'] += duration_ms.to_f
+    end
 
     def new_row
       { 'count' => 0, 'errors' => 0, 'total_ms' => 0.0, 'max_ms' => 0.0, 'buckets' => Histogram.empty }

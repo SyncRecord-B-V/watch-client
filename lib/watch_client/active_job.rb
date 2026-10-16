@@ -23,6 +23,7 @@ module WatchClient
           started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
           wait_ms = WatchClient::ActiveJobExtension.wait_ms(job)
           failed = false
+          run = WatchClient::JobTimer.start
           WatchClient::Breadcrumbs.with do
             block.call
           rescue Exception => e # rubocop:disable Lint/RescueException
@@ -33,7 +34,8 @@ module WatchClient
             raise
           ensure
             WatchClient::Metrics.record_job(job_class: job.class.name, queue: job.queue_name, failed: failed, wait_ms: wait_ms,
-                                            duration_ms: (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000)
+                                            duration_ms: (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000,
+                                            **WatchClient::JobTimer.stop(run))
           end
         end
       end

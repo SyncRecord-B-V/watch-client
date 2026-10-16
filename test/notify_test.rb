@@ -142,6 +142,30 @@ class NotifyTest < Minitest::Test
     assert_kind_of String, notice['context']['record']
   end
 
+  # Rails sets ExecutionContext[:job] on every perform_now and doesn't restore it, so after a nested
+  # job (SolidCable::TrimJob inside a broadcast) Rails' context names the inner job.
+  def test_rails_error_subscriber_blames_the_job_that_is_running_not_a_nested_one
+    inner = Struct.new(:job_id, :queue_name).new('trim-1', 'default')
+    inner.define_singleton_method(:class) { Struct.new(:name).new('SolidCable::TrimJob') }
+    WatchClient::Context.with(job_class: 'SalesforceSyncJob', job_id: 'sync-1', queue: 'salesforce') do
+      WatchClient::ErrorSubscriber.new.report(raise_error, handled: true, context: { job: inner })
+    end
+
+    notice = next_notice
+    assert_equal 'SalesforceSyncJob', notice['component']
+    refute_equal 'trim-1', notice['context']['job_id']
+  end
+
+  def test_rails_error_subscriber_uses_rails_job_outside_our_context
+    job = Struct.new(:job_id, :queue_name).new('j-1', 'mailers')
+    job.define_singleton_method(:class) { Struct.new(:name).new('InvoiceMailerJob') }
+    WatchClient::ErrorSubscriber.new.report(raise_error, handled: false, context: { job: job })
+
+    notice = next_notice
+    assert_equal 'InvoiceMailerJob', notice['component']
+    assert_equal 'j-1', notice['context']['job_id']
+  end
+
   def test_rails_error_subscriber_can_skip_handled_errors
     WatchClient.configuration.report_handled_errors = false
     WatchClient::ErrorSubscriber.new.report(raise_error, handled: true)

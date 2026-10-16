@@ -27,6 +27,8 @@ module WatchClient
         ) do
           started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
           failed = false
+          # ActiveJob jobs ("wrapped") are timed by the ActiveJob hook instead.
+          run = WatchClient::JobTimer.start unless job['wrapped']
           WatchClient::Breadcrumbs.with do
             yield
           rescue Exception => e # rubocop:disable Lint/RescueException
@@ -35,11 +37,11 @@ module WatchClient
             WatchClient::Breadcrumbs.attach(e)
             raise
           ensure
-            # ActiveJob jobs ("wrapped") are timed by the ActiveJob hook instead.
-            unless job['wrapped']
+            if run
               WatchClient::Metrics.record_job(job_class: job['class'].to_s, queue: queue, failed: failed,
                                               wait_ms: SidekiqIntegration.wait_ms(job),
-                                              duration_ms: (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000)
+                                              duration_ms: (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000,
+                                              **WatchClient::JobTimer.stop(run))
             end
           end
         end

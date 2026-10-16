@@ -2,6 +2,18 @@
 
 ## 0.10.0 (unreleased)
 
+- Jobs: each run's time in SQL (and number of queries) and in outgoing HTTP calls is sent with the job numbers
+  (Watch shows "where the time goes" per job class), and outgoing calls are also counted per job class and host
+  (which job uses an API's quota).
+- Outside API quotas: every outgoing call's rate-limit headers are read (nothing else from the answer) and sent with
+  the per-host numbers: limit, remaining and reset per quota (`RateLimit-*`, `X-RateLimit-*`, Salesforce
+  `Sforce-Limit-Info`, Shopify, HubSpot, Exact Online per minute and per day), plus a count of 429 answers. Watch shows
+  them under Performance > Outside APIs and alerts when a quota runs low. No code needed in the app.
+  Quota headers over 256 bytes are ignored before any parsing, numbers are bounded and the free-form `RateLimit`
+  header is read field by field (at most 8), so a hostile API can't slow the app down through these headers.
+- Fix: an error reported through `Rails.error` inside a job was shown "in" the last nested job instead (e.g.
+  `in SolidCable::TrimJob` after a broadcast): Rails doesn't restore its job context after a nested `perform_now`.
+  The job running at the time (watch_client's own context) now wins.
 - **Renamed to `watch_client`** (repository: github.com/SyncRecord-B-V/watch-client), a clean break with no old names
   kept. Watch is its own product (powered by SyncRecord):
   - gem `watch_client`, `require "watch_client"`, module `WatchClient`

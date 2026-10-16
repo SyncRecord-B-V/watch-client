@@ -11,6 +11,7 @@ app starts sending everything Watch shows:
 | Rails and JavaScript errors, grouped, with alerts | **Errors** | the gem (+ the browser tag for JavaScript) |
 | Response times per endpoint, deploys before / after | **Performance → Endpoints** | the gem |
 | Calls to outside services (Stripe, Exact Online…) | **Performance → Outside APIs** | the gem |
+| API quotas left and 429s (from the APIs' rate-limit headers: Salesforce, GitHub, Shopify, HubSpot, Exact Online, `RateLimit-*`) | **Performance → Outside APIs**, dashboard when low | the gem |
 | Background jobs and queue sizes | **Performance → Jobs** | the gem |
 | Memory, garbage collection, Puma threads | **Performance → Processes** | the gem |
 | Page speed of real visits (Core Web Vitals) | **Performance → Page speed** | the browser tag (Team / Business plan) |

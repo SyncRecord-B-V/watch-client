@@ -41,6 +41,7 @@ module WatchClient
       WatchClient::Railtie.attach_logger!
       WatchClient::RequestSubscriber.subscribe!
       WatchClient::Metrics.install!(config)
+      WatchClient::JobTimer.subscribe! if config.performance_monitoring
       WatchClient::NetHTTPPropagation.install! if config.propagate_request_id || config.breadcrumbs || config.performance_monitoring
       WatchClient::Breadcrumbs.subscribe! if config.breadcrumbs
       if defined?(::Sidekiq)

@@ -2,6 +2,7 @@
 
 require 'net/http'
 require 'openssl'
+require 'watch_client/api_quota'
 
 module WatchClient
   # Adds X-Request-ID to outgoing Net::HTTP requests (Faraday's default adapter
@@ -58,7 +59,8 @@ module WatchClient
         default_port = use_ssl? ? 443 : 80
         host = port == default_port ? address : "#{address}:#{port}"
         Thread.current[HTTP_MS_KEY] += duration if Thread.current[HTTP_MS_KEY]
-        metrics&.record_http(host: host, duration_ms: duration, status: response&.code, failure: failure)
+        quotas = metrics && response ? WatchClient::ApiQuota.parse(response) : nil
+        metrics&.record_http(host: host, duration_ms: duration, status: response&.code, failure: failure, quotas: quotas)
         if breadcrumbs && response
           WatchClient::Breadcrumbs.add(
             'http', "#{req.method} #{use_ssl? ? 'https' : 'http'}://#{host}#{req.path.to_s.split('?').first} #{response.code}",
