@@ -18,6 +18,20 @@ if defined?(Rails::Application)
   module WatchDummy
     HUB = FakeHub.new
 
+    # Stands in for a Redis-backed middleware in front of Rails' error pages (a session or
+    # rate-limit store) when Redis is down.
+    class RedisBackedMiddleware
+      def initialize(app)
+        @app = app
+      end
+
+      def call(env)
+        raise IOError, 'Error connecting to Redis on 127.0.0.1:6379 (Errno::ECONNREFUSED)' if env['PATH_INFO'] == '/redis-down'
+
+        @app.call(env)
+      end
+    end
+
     class Application < Rails::Application
       config.root = File.expand_path('../tmp/dummy', __dir__)
       config.eager_load = false
@@ -29,6 +43,7 @@ if defined?(Rails::Application)
       config.filter_parameters += %i[password token]
       config.consider_all_requests_local = true
       config.action_dispatch.show_exceptions = :none
+      config.middleware.insert_before 0, WatchDummy::RedisBackedMiddleware # in front of Rails' executor
 
       routes.append do
         get '/hello' => 'watch_dummy/hello#show'
@@ -134,6 +149,25 @@ if defined?(Rails::Application)
       assert_equal '[FILTERED]', notice['cgi_env']['HTTP_X_FORWARDED_FOR']
       assert_equal 'watch_client', notice['notifier']['name']
       assert notice['app_env']['rails_version']
+    end
+
+    def test_errors_from_middleware_in_front_of_rails_error_handling_are_reported
+      assert_equal WatchClient::OuterMiddleware, app.middleware.first.klass, 'runs in front of every other middleware'
+      notices = requests_after('/redis-down').flat_map(&:errors)
+      assert_equal 1, notices.size
+      assert_equal 'IOError', notices.first['exception_class']
+      assert_equal false, notices.first['handled']
+    end
+
+    def test_errors_rails_handles_itself_like_a_failing_redis_cache_are_reported
+      # What Rails' Redis cache store does when Redis is down: it keeps the app running and
+      # reports the error as handled, with severity warning.
+      Rails.error.report(IOError.new('Redis cache unreachable'), handled: true, severity: :warning,
+                                                                 source: 'redis_cache_store.active_support')
+      notice = collect_requests.flat_map(&:errors).find { |n| n['message'] == 'Redis cache unreachable' }
+      refute_nil notice
+      assert_equal true, notice['handled']
+      assert_equal 'warning', notice['context']['severity']
     end
 
     def test_job_errors_are_reported_through_rails_error

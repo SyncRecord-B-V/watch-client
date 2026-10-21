@@ -26,6 +26,9 @@ module WatchClient
         rescue Exception => e # rubocop:disable Lint/RescueException
           Notice.attach_context(e)
           Breadcrumbs.attach(e)
+          # In Rails, Rails itself reports it (DebugExceptions / Rails.error); outside Rails
+          # (WatchClient.start!) this is the place.
+          WatchClient.notify(e, handled: false) if WatchClient.started? && e.is_a?(StandardError)
           raise
         end
       end

@@ -5,6 +5,8 @@ require 'watch_client/rack_middleware'
 require 'watch_client/request_subscriber'
 require 'watch_client/active_job'
 require 'watch_client/error_subscriber'
+require 'watch_client/outer_middleware'
+require 'watch_client/crash_reporter'
 
 module WatchClient
   # Hooks the gem into a Rails app: defaults from the app, Rack middleware, logger,
@@ -17,6 +19,14 @@ module WatchClient
       config.app_name ||= app.class.module_parent_name.underscore.dasherize
     end
 
+    # Rails runs a railtie's initializers in the order they are declared (each one implicitly after
+    # the one before), so: the early ones first, the one after load_config_initializers last.
+
+    # Early, so a crash later in the boot (an initializer, eager loading) is reported too.
+    initializer 'watch_client.crash_reporter', before: :load_config_initializers do
+      WatchClient::CrashReporter.install!
+    end
+
     initializer 'watch_client.middleware' do |app|
       app.middleware.insert_after ActionDispatch::RequestId, WatchClient::RackMiddleware
     end
@@ -27,6 +37,12 @@ module WatchClient
 
     initializer 'watch_client.active_job' do
       ActiveSupport.on_load(:active_job) { WatchClient::ActiveJobExtension.install(self) }
+    end
+
+    # In front of everything, also of middleware the app inserts at 0 in config/initializers: errors
+    # from middleware that runs before Rails' own error handling.
+    initializer 'watch_client.outer_middleware', after: :load_config_initializers do |app|
+      app.middleware.insert 0, WatchClient::OuterMiddleware
     end
 
     config.after_initialize do |app|
@@ -51,11 +67,13 @@ module WatchClient
       WatchClient::Railtie.attach_error_reporting! if config.send_errors
       WatchClient::DatabaseMonitor.install!(config) if config.database_monitoring && defined?(::ActiveRecord::Base)
       WatchClient::Dependencies.report_later(config)
-      at_exit { WatchClient.shutdown }
+      WatchClient::CrashReporter.install! # sends what is left at exit
     end
 
     rake_tasks do
       load File.expand_path('tasks.rake', __dir__)
+      require 'watch_client/rake_reporting'
+      WatchClient::RakeReporting.install! if WatchClient.configuration.send_errors
     end
 
     generators do

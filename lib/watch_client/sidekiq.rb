@@ -18,7 +18,7 @@ module WatchClient
 
     # Runs the job inside a log context (request_id, job_id, job_class, queue) and times it.
     class ServerMiddleware
-      def call(_worker, job, queue)
+      def call(_worker, job, queue, &block)
         WatchClient::Context.with(
           request_id: job[JOB_KEY],
           job_id: job['jid'],
@@ -30,9 +30,10 @@ module WatchClient
           # ActiveJob jobs ("wrapped") are timed by the ActiveJob hook instead.
           run = WatchClient::JobTimer.start unless job['wrapped']
           WatchClient::Breadcrumbs.with do
-            yield
+            WatchClient::JobDetails.with(job, &block)
           rescue Exception => e # rubocop:disable Lint/RescueException
             failed = true
+            WatchClient::JobDetails.attach(e, job)
             WatchClient::Notice.attach_context(e)
             WatchClient::Breadcrumbs.attach(e)
             raise

@@ -33,7 +33,10 @@ module WatchClient
       entry, bytes = self.class.prepare(entry)
       @mutex.synchronize do
         reset_after_fork! if @pid != Process.pid
-        return false if @closed
+        if @closed
+          diagnose('not sent: watch_client was already shut down (at exit)')
+          return false
+        end
 
         unless entry
           @stats[:dropped_unencodable] += 1
@@ -75,29 +78,35 @@ module WatchClient
 
     # Sends everything buffered now, from the calling thread. Used by
     # WatchClient.flush, at shutdown, and in tests.
-    def flush(timeout: config.shutdown_timeout)
+    def flush(timeout: config.shutdown_timeout, retries: 1)
       deadline = monotonic + timeout
       loop do
         batch = take_batch
         break if batch.empty?
 
-        deliver(batch, retries: monotonic < deadline ? 1 : 0)
+        deliver(batch, retries: monotonic < deadline ? retries : 0)
         break if monotonic >= deadline
       end
     end
 
-    # Stops the worker and sends what is left (no retries). Further pushes are ignored.
+    # Stops the worker and sends what is left (no retries), within `timeout` in total. Further
+    # pushes are ignored. In a forked child (Puma worker, Parallel) only the child's own entries
+    # are sent: the parent's buffer and connection stay the parent's.
     def shutdown(timeout: config.shutdown_timeout)
+      deadline = monotonic + timeout
       thread = @mutex.synchronize do
         return if @closed
 
+        reset_after_fork! if @pid != Process.pid
         @closed = true
         @stopping = true
-        @wakeup.signal
+        @wakeup.broadcast
         @thread
       end
-      thread&.join(timeout)
-      flush(timeout: timeout)
+      # Still sending (a slow Watch): don't use the same connection from a second thread.
+      return if thread&.join([deadline - monotonic, 0].max).nil? && thread&.alive?
+
+      flush(timeout: [deadline - monotonic, 0.1].max, retries: 0)
       transport.close
     end
 
@@ -142,6 +151,15 @@ module WatchClient
       end
     end
 
+    def requeue(batch)
+      sizes = batch.map { |entry| self.class.prepare(entry)[1] }
+      @mutex.synchronize do
+        @buffer.unshift(*batch)
+        @sizes.unshift(*sizes)
+        @buffer_bytes += sizes.sum
+      end
+    end
+
     # Called with the mutex held.
     def drop_oldest
       @buffer.shift
@@ -164,7 +182,13 @@ module WatchClient
         elsif result.retry? && attempt < retries && !stopping?
           attempt += 1
           count(:retries, 1)
-          sleep(backoff(attempt))
+          # Interruptible: shutdown (at exit) wakes it instead of waiting out the backoff.
+          @mutex.synchronize { @wakeup.wait(@mutex, backoff(attempt)) unless @stopping }
+          if stopping?
+            # Shutting down: hand the batch back, shutdown's own flush sends it.
+            requeue(batch)
+            return false
+          end
         else
           count(:dropped_delivery, batch.size)
           diagnose("dropped #{batch.size} entries: #{result.error}")

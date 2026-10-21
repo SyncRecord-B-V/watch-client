@@ -2,6 +2,24 @@
 
 ## 0.10.0 (unreleased)
 
+- More errors reach Watch (the ones only Honeybadger used to catch):
+  - a crash that ends the process (an initializer that can't reach Redis, a Sidekiq process that can't connect at
+    start, `rails runner`): reported from one early `at_exit` hook, which also sends what is still queued;
+  - errors from middleware in front of Rails' error handling: `WatchClient::OuterMiddleware` runs first in the stack;
+  - failing rake tasks (cron `rake ...` jobs, `db:migrate`), sent right away.
+  Each exception is still reported once.
+- Outside Rails: `WatchClient.start!` installs what the Railtie does in a Rails app (outgoing HTTP timing and quotas,
+  per-minute metrics, Sidekiq context and error handler, the gem list, flush at exit); `WatchClient::RackMiddleware`
+  is now loaded without Rails too, and after `start!` it reports errors that escape the Rack app.
+  `WatchClient.flush` and `WatchClient.shutdown` (also at exit) now send the buffered metrics too, within the given
+  timeout, and `shutdown` stops the metrics thread, so a short script's last minute isn't lost. One delivery thread at
+  a time: a flush that times out against a slow Watch is reused by the next flush, and `shutdown` stops it.
+- Failed jobs: the error includes the job (class, id, queue, attempt). Its arguments only on opt-in, per job
+  (`def self.watch_arguments(args)` picks what to send) or for all jobs (`config.send_job_arguments = true`,
+  `WATCH_SEND_JOB_ARGUMENTS=true`): records as `Invoice#42`, hashes filtered, emails masked, strings cut before
+  copying, at most 200 values / about 4 KB with cycle detection, and nothing at all while Watch is off.
+  A hash key over 100 bytes is never cut (the filter could miss it): it is left out with its value (`[LONG KEY]`).
+  Native Sidekiq jobs (not ActiveJob) send arguments only with `send_job_arguments`.
 - Jobs: each run's time in SQL (and number of queries) and in outgoing HTTP calls is sent with the job numbers
   (Watch shows "where the time goes" per job class), and outgoing calls are also counted per job class and host
   (which job uses an API's quota).

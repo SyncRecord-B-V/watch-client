@@ -35,7 +35,7 @@ module WatchClient
     # Error tracking
     attr_accessor :send_errors, :report_handled_errors, :ignore_errors, :before_notify,
                   :app_root, :backtrace_lines,
-                  :breadcrumbs, :breadcrumbs_max, :send_session, :send_cookie_values,
+                  :breadcrumbs, :breadcrumbs_max, :send_session, :send_cookie_values, :send_job_arguments,
                   :source_frames, :source_lines
 
     # Exceptions never reported (class names; subclasses too). Mostly 4xx noise.
@@ -132,6 +132,8 @@ module WatchClient
       @breadcrumbs_max = 40
       @send_session = true
       @send_cookie_values = false
+      # Every failed job's arguments (off: opt in per job with `self.watch_arguments`); see JobDetails.
+      @send_job_arguments = self.class.env('SEND_JOB_ARGUMENTS') == 'true'
       @source_frames = 10
       @source_lines = 3
 

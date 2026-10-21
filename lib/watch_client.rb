@@ -13,6 +13,8 @@ require 'watch_client/app_env'
 require 'watch_client/notice'
 require 'watch_client/net_http_propagation'
 require 'watch_client/job_timer'
+require 'watch_client/job_details'
+require 'watch_client/rack_middleware'
 require 'watch_client/browser_tag'
 require 'watch_client/check_in'
 require 'watch_client/database_monitor'
@@ -144,11 +146,51 @@ module WatchClient
     def flush(timeout: configuration.shutdown_timeout)
       @client&.flush(timeout: timeout)
       @error_client&.flush(timeout: timeout)
+      Metrics.instance&.flush(timeout: timeout)
     end
 
+    # Outside Rails (Sinatra, Rack, scripts, workers): installs what the Railtie installs in a Rails
+    # app: outgoing HTTP timing and request IDs, the per-minute metrics (outside APIs, quotas, process
+    # health, Sidekiq jobs), Sidekiq's job context and error handler, the gem list for vulnerability
+    # checks, and a flush at exit. Call it once after WatchClient.configure (or with WATCH_* set).
+    # Does nothing when Watch isn't configured; safe to call twice; returns whether it is running.
+    def start!
+      return false unless enabled?
+      return true if @started
+
+      @started = true
+      config = configuration
+      config.filter_keys ||= Configuration::DEFAULT_FILTER_KEYS.dup
+      Metrics.install!(config)
+      JobTimer.subscribe! if config.performance_monitoring
+      NetHTTPPropagation.install! if config.propagate_request_id || config.breadcrumbs || config.performance_monitoring
+      if defined?(::Sidekiq)
+        require 'watch_client/sidekiq'
+        SidekiqIntegration.install!
+      end
+      Dependencies.report_later(config)
+      require 'watch_client/crash_reporter'
+      CrashReporter.install! # reports a crash and sends what is left at exit
+      true
+    rescue StandardError => e
+      diagnose("start! failed: #{e.class}: #{e.message}")
+      false
+    end
+
+    def started?
+      @started ? true : false
+    end
+
+    # Sends what is left (errors, logs, the last metrics) and stops the background threads.
+    # One deadline for all of it: an unreachable Watch never holds up an exit for longer than `timeout`
+    # (errors first, then logs, then the last metrics).
     def shutdown(timeout: configuration.shutdown_timeout)
-      @error_client&.shutdown(timeout: timeout)
-      @client&.shutdown(timeout: timeout)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout.to_f
+      left = -> { [deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC), 0.1].max }
+      @error_client&.shutdown(timeout: left.call)
+      @client&.shutdown(timeout: left.call)
+      Metrics.instance&.shutdown(timeout: left.call)
+      @started = false
     end
 
     # Counters: queued, sent, batches_sent, retries, dropped_queue_full, dropped_delivery, buffered.
@@ -196,6 +238,7 @@ module WatchClient
       @error_client = nil
       @logger = nil
       @configuration = nil
+      @started = false
       Context.clear!
     end
   end

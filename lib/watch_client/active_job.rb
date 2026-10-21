@@ -25,10 +25,11 @@ module WatchClient
           failed = false
           run = WatchClient::JobTimer.start
           WatchClient::Breadcrumbs.with do
-            block.call
+            WatchClient::JobDetails.with(job) { block.call }
           rescue Exception => e # rubocop:disable Lint/RescueException
             # Rails reports unhandled job errors after this context has ended; keep it on the error.
             failed = true
+            WatchClient::JobDetails.attach(e, job)
             WatchClient::Notice.attach_context(e)
             WatchClient::Breadcrumbs.attach(e)
             raise

@@ -44,6 +44,7 @@ module WatchClient
         'fingerprint' => fingerprint&.to_s
       }
       notice['user_id'] = Entry.resolve_user_id(config) if log_context[:request_id]
+      notice['job'] = JobDetails.for_notice(exception, config)
       notice['request'] = request_info if request_info
       notice['source'] = source_context(notice['backtrace'], config)
       notice['breadcrumbs'] = Breadcrumbs.for_exception(exception) if config.breadcrumbs

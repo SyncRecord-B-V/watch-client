@@ -33,4 +33,18 @@ class ForkTest < Minitest::Test
     request = @hub.next_request
     assert_equal(['child line'], request.entries.map { |e| e['message'] })
   end
+
+  # The at_exit shutdown runs in every child too: it must not send what the parent had buffered.
+  def test_a_child_that_exits_does_not_resend_the_parents_lines
+    WatchClient.configuration.flush_interval = 60
+    WatchClient.logger.info('parent line')
+
+    pid = fork do
+      WatchClient.client.shutdown(timeout: 2)
+      exit!(0)
+    end
+    Process.wait(pid)
+
+    assert_nil @hub.next_request(timeout: 0.5)
+  end
 end

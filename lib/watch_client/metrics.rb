@@ -67,6 +67,7 @@ module WatchClient
     end
 
     def record_request(endpoint:, duration_ms:, status: nil, db_ms: nil, view_ms: nil, http_ms: nil)
+      discard_inherited!
       return if endpoint.to_s.empty?
 
       @mutex.synchronize do
@@ -89,6 +90,7 @@ module WatchClient
     # failure: "timeout" or "connection" when the call raised instead of answering.
     # quotas: ApiQuota.parse of the answer's headers (the latest one per name is kept).
     def record_http(host:, duration_ms:, status: nil, failure: nil, quotas: nil)
+      discard_inherited!
       return if host.to_s.empty?
 
       @mutex.synchronize do
@@ -115,6 +117,7 @@ module WatchClient
     # wait_ms: time between enqueue (or the scheduled time) and the start of the run.
     # db_ms / queries / http_ms: where the run's time went (JobTimer).
     def record_job(job_class:, duration_ms:, queue: nil, failed: false, wait_ms: nil, db_ms: nil, queries: nil, http_ms: nil)
+      discard_inherited!
       return if job_class.to_s.empty?
 
       @mutex.synchronize do
@@ -188,8 +191,76 @@ module WatchClient
       end
     end
 
+    # Sends what is buffered now (e.g. a short script about to exit), waiting at most `timeout`
+    # seconds. One delivery thread at a time: while an earlier flush is still sending (a slow
+    # Watch), this waits for that one instead of starting another. Returns true when there was
+    # nothing to send or it was accepted.
+    #
+    # Numbers recorded while a delivery was running are sent right after it, within the same
+    # timeout: a successful flush leaves nothing buffered.
+    def flush(timeout: @config.shutdown_timeout)
+      deadline = monotonic + timeout.to_f
+      loop do
+        sender = current_sender
+        remaining = deadline - monotonic
+        return false unless remaining.positive? && sender.join(remaining)
+
+        result = sender.value
+        @mutex.synchronize { @sender = nil if @sender.equal?(sender) }
+        return result unless result && pending?
+      end
+    rescue StandardError
+      false
+    end
+
+    # Anything recorded but not sent yet.
+    def pending?
+      @mutex.synchronize { [@requests, @http, @jobs, @job_http].any? { |rows| !rows.empty? } }
+    end
+
+    # Stops the worker, sends what is left within `timeout`, and stops a delivery that is still
+    # running after that: nothing of ours keeps running after shutdown.
+    def shutdown(timeout: @config.shutdown_timeout)
+      discard_inherited!
+      stop
+      result = flush(timeout: timeout)
+      sender = @mutex.synchronize { @sender }
+      if sender&.alive?
+        sender.kill
+        sender.join(1)
+      end
+      @mutex.synchronize { @sender = nil }
+      result
+    end
+
+    def sending?
+      @sender&.alive? || false
+    end
+
+    def running?
+      @thread&.alive? || false
+    end
+
+    # A forked child starts with the parent's numbers: they are the parent's to send. Dropped before
+    # the child records its first number (and at shutdown).
+    def discard_inherited!
+      return unless @pid && @pid != Process.pid
+
+      @mutex.synchronize do
+        next unless @pid && @pid != Process.pid
+
+        @requests = {}
+        @http = {}
+        @jobs = {}
+        @job_http = {}
+        @thread = nil
+        @sender = nil
+      end
+    end
+
     def stop
       @thread&.kill
+      @thread&.join(1)
       @thread = nil
     end
 
@@ -229,6 +300,21 @@ module WatchClient
 
     def interval
       [@config.database_interval.to_i, MIN_INTERVAL].max
+    end
+
+    # The running delivery, or a new one (one at a time).
+    def current_sender
+      @mutex.synchronize do
+        @sender = nil unless @sender&.alive?
+        @sender ||= Thread.new { send_once }.tap do |thread|
+          thread.report_on_exception = false
+          thread.name = 'watch-metrics-flush' if thread.respond_to?(:name=)
+        end
+      end
+    end
+
+    def monotonic
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
 
     def run
