@@ -2,6 +2,13 @@
 
 ## 0.10.0 (unreleased)
 
+- Browser relay (on by default with `WATCH_BROWSER_KEY` and `WATCH_API_KEY`): `watch_tag` loads watch.js from the app's
+  own website (`/watch/watch.js`, bundled with the gem), and its reports go to `/watch/browser_errors` and
+  `/watch/browser_vitals` there. `WatchClient::BrowserRelay` (first in the middleware stack, after
+  `OuterMiddleware`) checks them (same website, browser key, size, per-visitor and total limits per minute), answers
+  at once and sends them to Watch's `/api/v1/browser_reports` with the server key, at most once a minute in batches of
+  200 reports or 1 MB. Browser errors and page speed keep working where Watch's domain is blocked, and the page never
+  waits for Watch. `WATCH_BROWSER_RELAY=false` loads watch.js from Watch as before; `WATCH_BROWSER_PATH` moves it.
 - More errors reach Watch (the ones only Honeybadger used to catch):
   - a crash that ends the process (an initializer that can't reach Redis, a Sidekiq process that can't connect at
     start, `rails runner`): reported from one early `at_exit` hook, which also sends what is still queued;

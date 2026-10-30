@@ -3,18 +3,22 @@
 require 'erb'
 
 module WatchClient
-  # The <script> tag for watch.js (JavaScript errors and page speed), served by Watch itself.
+  # The <script> tag for watch.js (JavaScript errors and page speed).
   # In a Rails layout:  <%= watch_tag %>  or  <%= watch_tag(user_id: current_user&.id) %>
-  # Renders nothing unless WATCH_URL and WATCH_BROWSER_KEY are set.
+  # Renders nothing unless WATCH_URL and WATCH_BROWSER_KEY are set. With the browser relay (the
+  # default when WATCH_API_KEY is set too) watch.js and its reports go through the app's own website
+  # (BrowserRelay); otherwise watch.js comes from Watch.
   module BrowserTag
     module_function
 
     def html(user_id: nil, environment: nil, version: nil, nonce: nil, config: WatchClient.configuration)
       return '' unless config.browser_enabled?
 
+      relay = config.browser_relay?
       attributes = {
-        'src' => "#{config.url.to_s.chomp('/')}/watch.js",
+        'src' => relay ? "#{config.browser_path}/watch.js?v=#{BrowserRelay.script_version}" : "#{config.url.to_s.chomp('/')}/watch.js",
         'data-key' => config.browser_key,
+        'data-endpoint' => relay ? "#{config.browser_path}/browser_errors" : nil,
         'data-environment' => environment || config.environment,
         'data-version' => version || config.app_version,
         'data-user-id' => user_id,

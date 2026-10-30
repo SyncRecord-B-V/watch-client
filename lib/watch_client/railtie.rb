@@ -41,7 +41,10 @@ module WatchClient
 
     # In front of everything, also of middleware the app inserts at 0 in config/initializers: errors
     # from middleware that runs before Rails' own error handling.
+    # The browser relay (watch.js on the app's own website) right behind it: its requests skip the
+    # app's sessions, authentication and logging.
     initializer 'watch_client.outer_middleware', after: :load_config_initializers do |app|
+      app.middleware.insert 0, WatchClient::BrowserRelay
       app.middleware.insert 0, WatchClient::OuterMiddleware
     end
 

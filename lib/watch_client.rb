@@ -16,6 +16,7 @@ require 'watch_client/job_timer'
 require 'watch_client/job_details'
 require 'watch_client/rack_middleware'
 require 'watch_client/browser_tag'
+require 'watch_client/browser_relay'
 require 'watch_client/check_in'
 require 'watch_client/database_monitor'
 require 'watch_client/metrics'
@@ -189,6 +190,7 @@ module WatchClient
       left = -> { [deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC), 0.1].max }
       @error_client&.shutdown(timeout: left.call)
       @client&.shutdown(timeout: left.call)
+      BrowserRelay.reset!(timeout: left.call)
       Metrics.instance&.shutdown(timeout: left.call)
       @started = false
     end
@@ -234,6 +236,7 @@ module WatchClient
       Metrics.uninstall!
       @client&.shutdown(timeout: 0)
       @error_client&.shutdown(timeout: 0)
+      BrowserRelay.reset!
       @client = nil
       @error_client = nil
       @logger = nil

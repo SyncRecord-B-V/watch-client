@@ -27,6 +27,7 @@ module WatchClient
     DATABASE = { path: '/api/v1/database', key: nil }.freeze
     METRICS = { path: '/api/v1/metrics', key: nil }.freeze
     DEPENDENCIES = { path: '/api/v1/dependencies', key: nil }.freeze
+    BROWSER_REPORTS = { path: '/api/v1/browser_reports', key: 'reports' }.freeze
 
     # path: API path on the hub; key: the JSON key that wraps a batch (nil = send the object as is).
     def initialize(config, path: LOGS[:path], key: LOGS[:key])

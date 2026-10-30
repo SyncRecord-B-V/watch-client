@@ -126,11 +126,27 @@ With `WATCH_BROWSER_KEY` set, add one line to the `<head>` of your layout(s):
 <%= watch_tag(user_id: current_user&.id) %>
 ```
 
-This loads `watch.js` from Watch (about 5 KB gzipped, no dependencies). It reports uncaught JavaScript errors and unhandled
+This loads `watch.js` (about 5 KB gzipped, no dependencies). It reports uncaught JavaScript errors and unhandled
 promise rejections, with the last clicks, page changes, console errors and failed requests; and it measures each full
 page load (Core Web Vitals, Team and Business plans). Nothing is rendered when the browser key is missing or in tests.
 
-If the app has a **Content Security Policy**, allow Watch (the tag gets the CSP nonce automatically):
+watch.js loads from **your own website**, and its reports go there too (the browser relay, on by default):
+
+- `/watch/watch.js` is the copy of watch.js that comes with the gem, served by `WatchClient::BrowserRelay` (first in
+  the middleware stack, before sessions and authentication). Browsers keep it for a year per version.
+- `/watch/browser_errors` and `/watch/browser_vitals` take the reports: only from your website's own pages, with your
+  browser key, up to 64 KB (errors) or 4 KB (page speed), at most 60 errors and 120 page views per visitor per
+  minute (600 and 6,000 in all, counted in `Rails.cache`). The visitor gets an empty answer at once; a background
+  thread sends the reports to Watch with the server key at most once a minute, in batches of 200 reports or 1 MB.
+
+So browser errors and page speed keep working where Watch's domain is blocked (company firewalls, ad blockers, some
+countries), and a slow Watch never slows your pages. Watch still only stores reports from the websites you allowed
+for the app. The visitor's IP address is Rails' `request.remote_ip`, so it follows your `trusted_proxies`.
+`WATCH_BROWSER_RELAY=false` (or no `WATCH_API_KEY`) loads watch.js from Watch instead; `WATCH_BROWSER_PATH` moves
+the relay (default `/watch`).
+
+With a **Content Security Policy** and the relay, `:self` is all it needs (the tag gets the CSP nonce automatically).
+Without the relay, allow Watch:
 
 ```ruby
 # config/initializers/content_security_policy.rb
@@ -357,6 +373,7 @@ end
 | `report_dependencies` | on (`WATCH_REPORT_DEPENDENCIES=false`) | Gem list at boot, for vulnerable gem alerts |
 | `browser_vitals`, `vitals_sample_rate` | `true`, `1.0` | Page speed from watch.js; share of page views measured (e.g. `0.25`) |
 | `browser_key`, `browser_enabled` | `WATCH_BROWSER_KEY`, on when url and browser key are set (off in `test`) | The browser tag |
+| `browser_relay`, `browser_path` | on (`WATCH_BROWSER_RELAY=false`), `/watch` (`WATCH_BROWSER_PATH`) | watch.js and its reports through your own website (needs the API key too) |
 | `check_ins_enabled` | on, off in `test` | Heartbeat check-ins (they need no API key) |
 
 **Database (PostgreSQL)**
@@ -402,7 +419,7 @@ migration: `enable_extension "pg_stat_statements"`). Slow queries work with any 
 | `401` from Watch | The API key is wrong or was rotated, or the app is paused (plan limit) or set inactive in Watch |
 | Some log lines are missing | `WatchClient.stats` in a console shows dropped entries; the account may be over its monthly volume (**Plan & usage** in Watch); `min_level` may be above the line's level |
 | Errors don't show up | The class may be in `ignore_errors`; errors in the `test` environment are never sent; `before_notify` may return nil |
-| JavaScript errors / page speed missing | `WATCH_BROWSER_KEY` set? The page's website listed under the app's allowed websites? CSP allows Watch in `script-src` and `connect-src`? Page speed needs the Team or Business plan |
+| JavaScript errors / page speed missing | `WATCH_BROWSER_KEY` set? The page's website listed under the app's allowed websites? Does `/watch/watch.js` open on your website (the browser relay)? Without the relay: CSP allows Watch in `script-src` and `connect-src`? Page speed needs the Team or Business plan |
 | Performance, Jobs or Processes empty | Needs gem 0.7 / 0.8 or newer, a restart and `performance_monitoring` on; a process starts its per-minute report at its first request, outgoing call or job |
 | `not sending anything: WATCH_URL must use https://` | Use an `https://` URL, or set `WATCH_ALLOW_HTTP=true` for a private network you trust |
 | Database page empty | Needs Active Record (health, top queries and tables need PostgreSQL); `database_monitoring` on; Top queries needs `pg_stat_statements` |
@@ -459,6 +476,7 @@ require "watch_client"
 WatchClient.start!                 # outgoing HTTP calls and quotas, metrics, Sidekiq, gem list, flush at exit
 
 use WatchClient::RackMiddleware    # Rack / Sinatra apps: request IDs, breadcrumbs, errors that escape the app
+use WatchClient::BrowserRelay      # with WATCH_BROWSER_KEY: watch.js and its reports on your own website
 WatchClient.logger.info("...")     # logs (or broadcast your own logger to it)
 WatchClient.notify(error)          # errors you rescue yourself
 ```
@@ -477,6 +495,8 @@ reporting, SQL / render breadcrumbs and database monitoring. Errors from `RackMi
 - `WatchClient::RackMiddleware` right after `ActionDispatch::RequestId`: request ID in the context, outgoing-call timing.
 - `WatchClient::OuterMiddleware` first in the stack: reports errors from middleware that runs before Rails' own error
   handling (a Redis-backed session or rate-limit store, `Rack::Cors`...) and raises them again.
+- `WatchClient::BrowserRelay` right behind it: answers `/watch/watch.js`, `/watch/browser_errors` and
+  `/watch/browser_vitals` (the browser relay); every other request passes straight through.
 - `process_action.action_controller` subscriber: the request summary line and endpoint numbers.
 - `sql.active_record` subscriber: slow queries (database monitoring).
 - ActiveJob: `serialize` stores the request ID; `around_perform` sets the job context and times the job.
@@ -496,7 +516,8 @@ reporting, SQL / render breadcrumbs and database monitoring. Errors from `RackMi
     [500, {}, ["Internal Server Error\n"]]
   end
   ```
-- Background threads per process: log delivery, error delivery, the per-minute metrics report, the database sampler.
+- Background threads per process: log delivery, error delivery, the per-minute metrics report, the database sampler,
+  and relayed browser reports (only once one arrives).
 - `at_exit` (registered early in the boot): reports the exception that ends the process, if any (not `exit`, not
   signals), then delivers what is still buffered (up to `shutdown_timeout`).
 

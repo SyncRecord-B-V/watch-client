@@ -17,6 +17,11 @@ module WatchClient
     attr_accessor :allow_http
     # Browser error tracking (watch.js): the app's public browser key from Watch.
     attr_accessor :browser_key, :browser_enabled
+    # browser_relay: watch.js and its reports go through the app's own website (browser_path,
+    # default /watch), so they still arrive where Watch's domain is blocked; false loads watch.js
+    # from Watch. trusted_proxies is Rails' own setting (request.remote_ip) and isn't repeated here.
+    attr_accessor :browser_relay
+    attr_reader :browser_path
     # Heartbeat check-ins (WatchClient.check_in): on outside the test environment.
     attr_writer :check_ins_enabled
 
@@ -101,6 +106,8 @@ module WatchClient
       @allow_http = self.class.env('ALLOW_HTTP') == 'true'
       @browser_key = self.class.env('BROWSER_KEY')
       @browser_enabled = nil # nil = on when url and browser_key are set (and not in test)
+      @browser_relay = self.class.env('BROWSER_RELAY') != 'false'
+      self.browser_path = self.class.env('BROWSER_PATH')
 
       @environment = self.class.env('ENVIRONMENT') || ENV['RAILS_ENV'] || ENV['RACK_ENV'] || 'development'
       @host = ENV['DYNO'] || ENV['HOSTNAME'] || safe_hostname
@@ -159,6 +166,17 @@ module WatchClient
       return false if environment.to_s == 'test'
 
       present?(url) && present?(browser_key) && secure_url_or_warn?
+    end
+
+    # The relay sends the reports with the server key, so it also needs Watch itself to be on.
+    def browser_relay?
+      browser_relay != false && browser_enabled? && enabled?
+    end
+
+    # "/watch" by default; only a plain path ("/assets/watch"), else the default.
+    def browser_path=(path)
+      path = "/#{path.to_s.strip.delete_prefix('/').delete_suffix('/')}"
+      @browser_path = path.match?(%r{\A(?:/[A-Za-z0-9._-]+)+\z}) && !path.include?('/..') ? path : '/watch'
     end
 
     def check_ins_enabled?

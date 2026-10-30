@@ -12,10 +12,12 @@ module WatchClient
   class Client
     attr_reader :config, :transport
 
-    def initialize(config, transport: Transport.new(config), batch_size: nil, flush_interval: nil)
+    # batch_bytes: a batch also stops at about this many JSON bytes (nil = count only).
+    def initialize(config, transport: Transport.new(config), batch_size: nil, flush_interval: nil, batch_bytes: nil)
       @config = config
       @transport = transport
       @batch_size = batch_size
+      @batch_bytes = batch_bytes
       @flush_interval = flush_interval
       @mutex = Mutex.new
       @wakeup = ConditionVariable.new
@@ -146,8 +148,13 @@ module WatchClient
 
     def take_batch
       @mutex.synchronize do
-        @buffer_bytes -= @sizes.shift(batch_size).sum
-        @buffer.shift(batch_size)
+        count = batch_size
+        if @batch_bytes
+          total = 0
+          count = @sizes.first(batch_size).take_while { |bytes| (total += bytes) <= @batch_bytes }.size.clamp(1, batch_size)
+        end
+        @buffer_bytes -= @sizes.shift(count).sum
+        @buffer.shift(count)
       end
     end
 
