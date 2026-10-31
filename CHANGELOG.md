@@ -9,7 +9,7 @@
   at once and sends them to Watch's `/api/v1/browser_reports` with the server key, at most once a minute in batches of
   200 reports or 1 MB. Browser errors and page speed keep working where Watch's domain is blocked, and the page never
   waits for Watch. `WATCH_BROWSER_RELAY=false` loads watch.js from Watch as before; `WATCH_BROWSER_PATH` moves it.
-- More errors reach Watch (the ones only Honeybadger used to catch):
+- Expanded error capture in Watch:
   - a crash that ends the process (an initializer that can't reach Redis, a Sidekiq process that can't connect at
     start, `rails runner`): reported from one early `at_exit` hook, which also sends what is still queued;
   - errors from middleware in front of Rails' error handling: `WatchClient::OuterMiddleware` runs first in the stack;

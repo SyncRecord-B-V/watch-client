@@ -1,8 +1,8 @@
 # watch_client
 
 The Ruby gem that connects a Rails app to **Watch** (`https://watch.syncrecord.com`), a
-monitoring platform powered by SyncRecord: one place for what Papertrail, Honeybadger, AppSignal-style performance monitoring and
-bundler-audit each do. Install it once, set two environment variables, and the
+monitoring platform powered by SyncRecord that brings logs, error tracking, performance monitoring and
+vulnerable gem checks together. Install it once, set two environment variables, and the
 app starts sending everything Watch shows:
 
 | You get in Watch | Where in Watch | Needs |
