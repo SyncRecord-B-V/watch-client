@@ -2,6 +2,7 @@
 
 require 'time'
 require 'watch_client/sql_normalizer'
+require 'watch_client/internal_queries'
 
 module WatchClient
   # Reads PostgreSQL's own statistics over one of the app's pooled connections:
@@ -77,8 +78,10 @@ module WatchClient
       ORDER BY pg_relation_size(s.indexrelid) DESC LIMIT #{TABLES}
     SQL
 
-    def initialize(pool)
+    # `logger` defaults to ActiveRecord::Base.logger; it is quieted while we sample.
+    def initialize(pool, logger: nil)
       @pool = pool
+      @logger = logger
       @previous = nil
     end
 
@@ -205,17 +208,16 @@ module WatchClient
     end
 
     # One short read-only transaction with a statement timeout; our own queries are
-    # marked internal so they never show up as the app's slow queries or breadcrumbs.
-    def read_only
-      Thread.current[:watch_client_internal] = true
-      @pool.with_connection do |connection|
-        connection.transaction(requires_new: true) do
-          connection.execute("SET LOCAL statement_timeout = #{STATEMENT_TIMEOUT_MS}")
-          yield connection
+    # marked internal (never the app's slow queries or breadcrumbs) and kept out of the app's log.
+    def read_only(&block)
+      InternalQueries.run(@logger || InternalQueries.active_record_logger) do
+        @pool.with_connection do |connection|
+          connection.transaction(requires_new: true) do
+            connection.execute("SET LOCAL statement_timeout = #{STATEMENT_TIMEOUT_MS}")
+            block.call(connection)
+          end
         end
       end
-    ensure
-      Thread.current[:watch_client_internal] = nil
     end
 
     def select_all(connection, sql)

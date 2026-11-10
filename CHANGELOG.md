@@ -2,6 +2,9 @@
 
 ## 0.10.0 (unreleased)
 
+- Database monitoring and Solid Queue counts no longer print their SQL (`BEGIN`, `SET LOCAL statement_timeout`,
+  `pg_stat_activity`, `pg_stat_statements`, ...) in the app's log or `rails console`: `ActiveRecord::Base.logger` is
+  quieted for the sampling thread only, so the app's own queries are logged as before.
 - Browser relay (on by default with `WATCH_BROWSER_KEY` and `WATCH_API_KEY`): `watch_tag` loads watch.js from the app's
   own website (`/watch/watch.js`, bundled with the gem), and its reports go to `/watch/browser_errors` and
   `/watch/browser_vitals` there. `WatchClient::BrowserRelay` (first in the middleware stack, after

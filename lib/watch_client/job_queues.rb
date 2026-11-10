@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'watch_client/internal_queries'
+
 module WatchClient
   # Queue sizes and how long the oldest job has waited, plus failed / retrying / dead
   # / scheduled counts, read from the job backend: Solid Queue (its tables) or Sidekiq
@@ -20,7 +22,10 @@ module WatchClient
     end
 
     def solid_queue
-      Thread.current[:watch_client_internal] = true
+      InternalQueries.run { solid_queue_counts }
+    end
+
+    def solid_queue_counts
       now = Time.now
       ready = ::SolidQueue::ReadyExecution.group(:queue_name).pluck(:queue_name, Arel.sql('count(*)'),
                                                                     Arel.sql('min(created_at)'))
@@ -33,8 +38,6 @@ module WatchClient
         'scheduled' => (defined?(::SolidQueue::ScheduledExecution) ? ::SolidQueue::ScheduledExecution.count : nil),
         'running' => (defined?(::SolidQueue::ClaimedExecution) ? ::SolidQueue::ClaimedExecution.count : nil)
       }.compact
-    ensure
-      Thread.current[:watch_client_internal] = nil
     end
 
     def sidekiq

@@ -177,6 +177,30 @@ class DatabaseSamplerTest < Minitest::Test
     assert_equal 1000, result['tables'].first['total_bytes']
     assert_equal 'idx_old', result['unused_indexes'].first['name']
   end
+
+  # ActiveRecord logs every query at DEBUG; our sampling must not show up in the app's
+  # log or `rails console`, while other threads keep logging normally.
+  def test_sampling_queries_are_kept_out_of_the_app_log
+    require 'active_support'
+    require 'active_support/logger'
+    output = StringIO.new
+    logger = ActiveSupport::Logger.new(output)
+    logger.level = Logger::DEBUG
+    seen = {}
+    @pool.define_singleton_method(:execute) do |sql|
+      seen[:debug_inside] = logger.debug?
+      seen[:other_thread] = Thread.new { logger.debug? }.value
+      executed << sql
+    end
+
+    sampler = WatchClient::DatabaseSampler.new(@pool, logger: logger)
+    sampler.health
+
+    refute seen[:debug_inside], 'logger should be silenced while sampling'
+    assert seen[:other_thread], 'other threads should still log at DEBUG'
+    assert logger.debug?, 'logger level is restored after sampling'
+    assert_nil Thread.current[:watch_client_internal]
+  end
 end
 
 class DatabaseMonitorTest < Minitest::Test
